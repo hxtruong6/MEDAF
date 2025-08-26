@@ -14,32 +14,29 @@ import PIL.ImageEnhance
 import torchvision.transforms as transforms
 
 from PIL import Image
+
 logger = logging.getLogger(__name__)
 
 PARAMETER_MAX = 10
 
 imagenet_mean = [0.485, 0.456, 0.406]
-imagenet_std  = [0.229, 0.224, 0.225]
+imagenet_std = [0.229, 0.224, 0.225]
 
 simple_mean = (0.5, 0.5, 0.5)
-simple_std  = (0.25, 0.25, 0.25)
+simple_std = (0.25, 0.25, 0.25)
 
-simple_norm   = transforms.Normalize(mean=simple_mean, std=simple_std)
+simple_norm = transforms.Normalize(mean=simple_mean, std=simple_std)
 imagenet_norm = transforms.Normalize(mean=imagenet_mean, std=imagenet_std)
 
 
 def test_transform(img_size):
     if img_size > 200:
-        return transforms.Compose([
-        transforms.CenterCrop(img_size),
-        transforms.ToTensor(),
-        imagenet_norm
-        ])
-    return transforms.Compose([
-        transforms.CenterCrop(img_size),
-        transforms.ToTensor(),
-        simple_norm
-    ])
+        return transforms.Compose(
+            [transforms.CenterCrop(img_size), transforms.ToTensor(), imagenet_norm]
+        )
+    return transforms.Compose(
+        [transforms.CenterCrop(img_size), transforms.ToTensor(), simple_norm]
+    )
 
 
 def predata(img_size):
@@ -47,7 +44,11 @@ def predata(img_size):
     if img_size > 200:
         trans += [transforms.Resize(256), transforms.RandomResizedCrop(img_size)]
     else:
-        trans.append(transforms.RandomCrop(size=img_size, padding=int(img_size*0.125), padding_mode='reflect'))
+        trans.append(
+            transforms.RandomCrop(
+                size=img_size, padding=int(img_size * 0.125), padding_mode="reflect"
+            )
+        )
     trans.append(RandAugmentMC(n=2, m=10))
     if img_size > 200:
         trans += [transforms.ToTensor(), imagenet_norm]
@@ -88,8 +89,8 @@ def CutoutAbs(img, v, **kwarg):
     w, h = img.size
     x0 = np.random.uniform(0, w)
     y0 = np.random.uniform(0, h)
-    x0 = int(max(0, x0 - v / 2.))
-    y0 = int(max(0, y0 - v / 2.))
+    x0 = int(max(0, x0 - v / 2.0))
+    y0 = int(max(0, y0 - v / 2.0))
     x1 = int(min(w, x0 + v))
     y1 = int(min(h, y0 + v))
     xy = (x0, y0, x1, y1)
@@ -112,7 +113,7 @@ def Invert(img, **kwarg):
 
 
 def manual_ctr(x):
-    s = random.uniform(0.1,2)
+    s = random.uniform(0.1, 2)
     return x * s
 
 
@@ -189,23 +190,25 @@ def _int_parameter(v, max_v):
 
 
 def fixmatch_augment_pool():
-    augs = [(AutoContrast, None, None),
-            (Brightness, 0.9, 0.05),
-            (Color, 0.9, 0.05),
-            (Contrast, 0.9, 0.05),
-            (Equalize, None, None),
-            (Identity, None, None),
-            (Posterize, 4, 4),
-            (Rotate, 30, 0),
-            (Sharpness, 0.9, 0.05),
-            (ShearX, 0.3, 0),
-            (ShearY, 0.3, 0),
-            (Solarize, 256, 0),
-            (TranslateX, 0.3, 0),
-            (TranslateY, 0.3, 0)]
+    augs = [
+        (AutoContrast, None, None),
+        (Brightness, 0.9, 0.05),
+        (Color, 0.9, 0.05),
+        (Contrast, 0.9, 0.05),
+        (Equalize, None, None),
+        (Identity, None, None),
+        (Posterize, 4, 4),
+        (Rotate, 30, 0),
+        (Sharpness, 0.9, 0.05),
+        (ShearX, 0.3, 0),
+        (ShearY, 0.3, 0),
+        (Solarize, 256, 0),
+        (TranslateX, 0.3, 0),
+        (TranslateY, 0.3, 0),
+    ]
     return augs
 
-    
+
 class RandAugmentMC(object):
     def __init__(self, n, m):
         assert n >= 1
@@ -213,8 +216,11 @@ class RandAugmentMC(object):
         self.n = n
         self.m = m
         self.augment_pool = fixmatch_augment_pool()
-        
-    def __call__(self, img, ):
+
+    def __call__(
+        self,
+        img,
+    ):
         ops = random.choices(self.augment_pool, k=self.n)
         for op, max_v, bias in ops:
             v = np.random.randint(1, self.m)
