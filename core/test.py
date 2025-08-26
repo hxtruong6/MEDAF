@@ -23,10 +23,11 @@ def compute_score(logit_list, softmax_list, score_wgts, branch_opt, fts=None):
     return temp
 
 
-def evaluation(model, test_loader, out_loader, **options):
+def evaluation(model, test_loader, out_loader, device=None, **options):
 
     model.eval()
-    torch.cuda.empty_cache()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     correct = 0
     total = 0
@@ -44,7 +45,7 @@ def evaluation(model, test_loader, out_loader, **options):
 
     with torch.no_grad():
         for data, labels in test_loader:
-            data, labels = data.cuda(), labels.cuda()
+            data, labels = data.to(device), labels.to(device)
             batch_size = labels.size(0)
             with torch.set_grad_enabled(False):
                 output_dict = model(data, return_ft=True)
@@ -81,7 +82,7 @@ def evaluation(model, test_loader, out_loader, **options):
                 labels_close.append(labels.data.cpu().numpy())
 
         for batch_idx, (data, labels) in enumerate(out_loader):
-            data, labels = data.cuda(), labels.cuda()
+            data, labels = data.to(device), labels.to(device)
             batch_size = labels.size(0)
             ood_label = torch.zeros_like(labels) - 1
 

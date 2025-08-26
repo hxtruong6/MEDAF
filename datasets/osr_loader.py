@@ -10,7 +10,7 @@ from torchvision.datasets import CIFAR10, CIFAR100, SVHN
 
 from .tools import *
 
-DATA_PATH = "/root/mjxx/datasets"
+DATA_PATH = "./datasets/data"
 # DATA_PATH = '_'
 TINYIMAGENET_PATH = DATA_PATH + "/tiny_imagenet/"
 

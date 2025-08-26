@@ -27,7 +27,7 @@ def attnDiv(cams):
     return orthogonal_loss / (i * (i - 1) / 2)
 
 
-def train(train_loader, model, criterion, optimizer, args):
+def train(train_loader, model, criterion, optimizer, args, device=None):
     model.train()
 
     loss_keys = args["loss_keys"]
@@ -37,8 +37,8 @@ def train(train_loader, model, criterion, optimizer, args):
     time_start = time.time()
 
     for i, data in enumerate(train_loader):
-        inputs = data[0].cuda()
-        target = data[1].cuda()
+        inputs = data[0].to(device)
+        target = data[1].to(device)
 
         output_dict = model(inputs, target)
         logits = output_dict["logits"]

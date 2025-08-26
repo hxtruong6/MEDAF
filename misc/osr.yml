@@ -9,7 +9,7 @@ score_wgts: [1, 0, 0]
 branch_opt: -1
 gate_temp: 100
 
-dataset: "tiny_imagenet"
+dataset: "cifar10"
 plus_num: 10
 id_set: "cifar10"
 ood_set: "svhn"

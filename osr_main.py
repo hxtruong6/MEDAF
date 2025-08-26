@@ -13,6 +13,16 @@ import warnings
 warnings.filterwarnings("ignore")
 
 
+def get_device():
+    """Detect and return the best available device for PyTorch"""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return torch.device("mps")
+    else:
+        return torch.device("cpu")
+
+
 def getLoader(options):
     print("{} Preparation".format(options["dataset"]))
     if "cifar10" == options["dataset"]:
@@ -134,19 +144,22 @@ def main(options):
 
 
 def trainLoop(options):
+    # Get device
+    device = get_device()
+    print(f"Using device: {device}")
 
     train_loader, test_loader, out_loader = getLoader(options)
     now_time = datetime.datetime.now().strftime("%m%d_%H:%M")
     ckpt_path = "./ckpt/osr" + "/" + options["dataset"] + "/" + now_time
     ensure_dir(ckpt_path)
     model = get_model(options)
-    model = nn.DataParallel(model).cuda()
+    model = model.to(device)  # Use device-agnostic approach instead of .cuda()
 
     if options["resume"]:
         load_checkpoint(model, options["ckpt"])
 
-    extractor_params = model.module.get_params(prefix="extractor")
-    classifier_params = model.module.get_params(prefix="classifier")
+    extractor_params = model.get_params(prefix="extractor")
+    classifier_params = model.get_params(prefix="classifier")
     lr_cls = options["lr"]
     lr_extractor = lr_cls
     params = [
@@ -168,7 +181,7 @@ def trainLoop(options):
             optimizer, milestones=options["milestones"], gamma=options["gamma"]
         )
 
-    entropy_loss = nn.CrossEntropyLoss().cuda()
+    entropy_loss = nn.CrossEntropyLoss().to(device)
     criterion = {"entropy": entropy_loss}
 
     epoch_start = 0
@@ -182,16 +195,20 @@ def trainLoop(options):
     for epoch in range(epoch_start, options["epoch_num"]):
         lr = optimizer.param_groups[0]["lr"]
         print(f"\nEpoch: [{epoch+1:d} | {options['epoch_num']:d}] LR: {lr:f}")
-        train_loss = train(train_loader, model, criterion, optimizer, args=options)
+        train_loss = train(
+            train_loader, model, criterion, optimizer, args=options, device=device
+        )
         if (epoch + 1) % options["test_step"] == 0:
-            result_list = evaluation(model, test_loader, out_loader, **options)
+            result_list = evaluation(
+                model, test_loader, out_loader, device=device, **options
+            )
         scheduler.step()
 
         if (epoch + 1) % options["save_step"] == 0:
             save_checkpoint(
                 {
                     "epoch": epoch + 1,
-                    "state_dict": model.module.state_dict(),
+                    "state_dict": model.state_dict(),
                     "optimizer": optimizer.state_dict(),
                     "scheduler": scheduler.state_dict(),
                 },
@@ -203,7 +220,7 @@ def trainLoop(options):
                 if os.path.exists(last_log_path):
                     os.remove(last_log_path)
 
-    result_list = evaluation(model, test_loader, out_loader, **options)
+    result_list = evaluation(model, test_loader, out_loader, device=device, **options)
     print(
         "\D-O-N-E!/ =>\nLast ACC:",
         result_list[0],
@@ -216,8 +233,15 @@ def trainLoop(options):
 
 
 if __name__ == "__main__":
-    cudnn.benchmark = True
+    # Only set cudnn.benchmark if CUDA is available
+    if torch.cuda.is_available():
+        cudnn.benchmark = True
+
     options = get_config("osr")
     set_seeding(options["seed"])
-    os.environ["CUDA_VISIBLE_DEVICES"] = options["gpu_ids"]
+
+    # Only set CUDA_VISIBLE_DEVICES if CUDA is available
+    if torch.cuda.is_available():
+        os.environ["CUDA_VISIBLE_DEVICES"] = options["gpu_ids"]
+
     main(options)
