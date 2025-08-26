@@ -1,0 +1,134 @@
+{
+  "dataset_type": "chest_xray",
+  "pathologies": [
+    "Atelectasis",
+    "Consolidation",
+    "Infiltration",
+    "Pneumothorax",
+    "Edema",
+    "Emphysema",
+    "Fibrosis",
+    "Effusion",
+    "Pneumonia",
+    "Pleural_Thickening",
+    "Cardiomegaly",
+    "Nodule",
+    "Mass",
+    "Hernia",
+    "Lung Lesion",
+    "Fracture",
+    "Lung Opacity",
+    "Enlarged Cardiomediastinum"
+  ],
+  "num_classes": 18,
+  "results": {
+    "global_gating": {
+      "config": {
+        "name": "Global Gating (Phase 1)",
+        "use_per_class_gating": false,
+        "use_label_correlation": false,
+        "enhanced_diversity": false
+      },
+      "best_metrics": {
+        "eval_loss": 0.5440450055258614,
+        "subset_accuracy": 0.07000000029802322,
+        "hamming_accuracy": 0.8744444251060486,
+        "precision": 0.017222221940755844,
+        "recall": 0.0555555559694767,
+        "f1_score": 0.026293469592928886,
+        "gating_type": "global",
+        "epoch": 1
+      },
+      "final_metrics": {
+        "eval_loss": 0.31492982166154043,
+        "subset_accuracy": 0.0,
+        "hamming_accuracy": 0.8955555558204651,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1_score": 0.0,
+        "gating_type": "global"
+      },
+      "training_time": 44.13589811325073,
+      "model_parameters": 44765315
+    },
+    "per_class_basic": {
+      "config": {
+        "name": "Per-Class Gating (Phase 2)",
+        "use_per_class_gating": true,
+        "use_label_correlation": false,
+        "enhanced_diversity": false
+      },
+      "best_metrics": {
+        "eval_loss": 0.5536711301122393,
+        "eval_diversity": 0.5174492044108254,
+        "subset_accuracy": 0.0,
+        "hamming_accuracy": 0.10444444417953491,
+        "precision": 0.10444443672895432,
+        "recall": 0.5555555820465088,
+        "f1_score": 0.17026476562023163,
+        "gating_type": "per_class",
+        "avg_gating_entropy": 1.0986123085021973,
+        "expert_specialization": 1.2288470315979794e-05,
+        "max_expert_preference": 0.33335888385772705,
+        "min_expert_preference": 0.3333052396774292,
+        "epoch": 1
+      },
+      "final_metrics": {
+        "eval_loss": 0.31888668877737864,
+        "eval_diversity": 0.6007856386048454,
+        "subset_accuracy": 0.0,
+        "hamming_accuracy": 0.10444444417953491,
+        "precision": 0.10444443672895432,
+        "recall": 0.5555555820465088,
+        "f1_score": 0.17026476562023163,
+        "gating_type": "per_class",
+        "avg_gating_entropy": 1.0986123085021973,
+        "expert_specialization": 9.626871906220913e-05,
+        "max_expert_preference": 0.3335299491882324,
+        "min_expert_preference": 0.33310267329216003
+      },
+      "training_time": 44.79785990715027,
+      "model_parameters": 44917046
+    },
+    "per_class_enhanced": {
+      "config": {
+        "name": "Enhanced Per-Class (Medical)",
+        "use_per_class_gating": true,
+        "use_label_correlation": true,
+        "enhanced_diversity": true,
+        "diversity_type": "cosine"
+      },
+      "best_metrics": {
+        "eval_loss": 0.5606234754834857,
+        "eval_diversity": 0.41490926912852694,
+        "subset_accuracy": 0.0,
+        "hamming_accuracy": 0.10444444417953491,
+        "precision": 0.10444443672895432,
+        "recall": 0.5555555820465088,
+        "f1_score": 0.17026476562023163,
+        "gating_type": "per_class",
+        "avg_gating_entropy": 1.0986123085021973,
+        "expert_specialization": 1.3922530342824757e-05,
+        "max_expert_preference": 0.33335644006729126,
+        "min_expert_preference": 0.3333054780960083,
+        "epoch": 1
+      },
+      "final_metrics": {
+        "eval_loss": 0.31352526375225614,
+        "eval_diversity": 0.630334198474884,
+        "subset_accuracy": 0.0,
+        "hamming_accuracy": 0.10444444417953491,
+        "precision": 0.10444443672895432,
+        "recall": 0.5555555820465088,
+        "f1_score": 0.17026476562023163,
+        "gating_type": "per_class",
+        "avg_gating_entropy": 1.0986123085021973,
+        "expert_specialization": 0.0001548891596030444,
+        "max_expert_preference": 0.3336127698421478,
+        "min_expert_preference": 0.33296382427215576
+      },
+      "training_time": 45.09519553184509,
+      "model_parameters": 44938998
+    }
+  }
+}
