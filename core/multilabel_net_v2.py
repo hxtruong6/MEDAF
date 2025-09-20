@@ -8,71 +8,73 @@ from .net import build_backbone, conv1x1, Classifier
 class PerClassGating(nn.Module):
     """
     Per-class gating mechanism for multi-label classification
-    
+
     Instead of global gating that applies the same weights across all classes,
     this module learns class-specific gating weights, allowing different
     experts to specialize in different classes.
     """
-    
-    def __init__(self, feature_dim, num_classes, num_experts=3, 
-                 hidden_dim=None, dropout=0.1):
+
+    def __init__(
+        self, feature_dim, num_classes, num_experts=3, hidden_dim=None, dropout=0.1
+    ):
         super(PerClassGating, self).__init__()
         self.num_classes = num_classes
         self.num_experts = num_experts
         self.feature_dim = feature_dim
-        
+
         if hidden_dim is None:
             hidden_dim = feature_dim // 4
-        
+
         # Shared feature transformation
         self.shared_transform = nn.Sequential(
-            nn.Linear(feature_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout)
+            nn.Linear(feature_dim, hidden_dim), nn.ReLU(), nn.Dropout(dropout)
         )
-        
+
         # Per-class gating networks
-        self.class_gates = nn.ModuleList([
-            nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim // 2),
-                nn.ReLU(),
-                nn.Dropout(dropout),
-                nn.Linear(hidden_dim // 2, num_experts)
-            ) for _ in range(num_classes)
-        ])
-        
+        self.class_gates = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Linear(hidden_dim, hidden_dim // 2),
+                    nn.ReLU(),
+                    nn.Dropout(dropout),
+                    nn.Linear(hidden_dim // 2, num_experts),
+                )
+                for _ in range(num_classes)
+            ]
+        )
+
         # Initialize with small weights to start with uniform gating
         for gate in self.class_gates:
             for layer in gate:
                 if isinstance(layer, nn.Linear):
                     nn.init.normal_(layer.weight, 0, 0.01)
                     nn.init.constant_(layer.bias, 0)
-    
+
     def forward(self, features, temperature=1.0):
         """
         Args:
             features: [B, feature_dim] - Global features from gating network
             temperature: Temperature for softmax (higher = more uniform)
-            
+
         Returns:
             gate_weights: [B, num_classes, num_experts] - Per-class gating weights
         """
         batch_size = features.size(0)
-        
+
         # Shared transformation
         shared_features = self.shared_transform(features)  # [B, hidden_dim]
-        
+
         # Compute per-class gating weights
         gate_logits = []
         for class_gate in self.class_gates:
             logits = class_gate(shared_features)  # [B, num_experts]
             gate_logits.append(logits)
-        
+
         gate_logits = torch.stack(gate_logits, dim=1)  # [B, num_classes, num_experts]
-        
+
         # Apply temperature and softmax
         gate_weights = F.softmax(gate_logits / temperature, dim=-1)
-        
+
         return gate_weights, gate_logits
 
 
@@ -80,68 +82,74 @@ class LabelCorrelationModule(nn.Module):
     """
     Module to capture label co-occurrence patterns for better gating
     """
-    
+
     def __init__(self, num_classes, embedding_dim=64):
         super(LabelCorrelationModule, self).__init__()
         self.num_classes = num_classes
         self.embedding_dim = embedding_dim
-        
+
         # Label embeddings
         self.label_embeddings = nn.Embedding(num_classes, embedding_dim)
-        
+
         # Correlation attention
         self.correlation_attention = nn.MultiheadAttention(
             embedding_dim, num_heads=4, batch_first=True
         )
-        
+
         # Output projection
         self.output_proj = nn.Linear(embedding_dim, embedding_dim)
-        
+
     def forward(self, predicted_labels=None):
         """
         Args:
             predicted_labels: [B, num_classes] - Soft predictions (optional)
-            
+
         Returns:
             correlation_features: [B, num_classes, embedding_dim]
         """
         # Get all label embeddings
-        label_indices = torch.arange(self.num_classes, device=self.label_embeddings.weight.device)
-        all_embeddings = self.label_embeddings(label_indices)  # [num_classes, embedding_dim]
-        
+        label_indices = torch.arange(
+            self.num_classes, device=self.label_embeddings.weight.device
+        )
+        all_embeddings = self.label_embeddings(
+            label_indices
+        )  # [num_classes, embedding_dim]
+
         batch_size = 1 if predicted_labels is None else predicted_labels.size(0)
-        
+
         # Expand for batch
-        label_emb = all_embeddings.unsqueeze(0).expand(batch_size, -1, -1)  # [B, num_classes, embedding_dim]
-        
+        label_emb = all_embeddings.unsqueeze(0).expand(
+            batch_size, -1, -1
+        )  # [B, num_classes, embedding_dim]
+
         # Self-attention to capture correlations
         corr_emb, _ = self.correlation_attention(label_emb, label_emb, label_emb)
-        
+
         # Final projection
         correlation_features = self.output_proj(corr_emb)
-        
+
         return correlation_features
 
 
 class MultiLabelMEDAFv2(nn.Module):
     """
     Enhanced Multi-Label MEDAF with configurable per-class gating
-    
+
     Key improvements:
     1. Configurable gating: Global vs Per-class
     2. Label correlation modeling
     3. Enhanced attention diversity
     4. Comparative evaluation support
     """
-    
+
     def __init__(self, args=None):
         super(MultiLabelMEDAFv2, self).__init__()
-        
+
         # Configuration
         self.use_per_class_gating = args.get("use_per_class_gating", False)
         self.use_label_correlation = args.get("use_label_correlation", False)
         self.enhanced_diversity = args.get("enhanced_diversity", False)
-        
+
         # Model architecture
         backbone, feature_dim, self.cam_size = build_backbone(
             img_size=args["img_size"],
@@ -149,17 +157,17 @@ class MultiLabelMEDAFv2(nn.Module):
             projection_dim=-1,
             inchan=3,
         )
-        
+
         self.img_size = args["img_size"]
         self.gate_temp = args["gate_temp"]
         self.num_classes = args["num_classes"]
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        
+
         print(f"Initializing MultiLabelMEDAFv2 with:")
         print(f"  - Per-class gating: {self.use_per_class_gating}")
         print(f"  - Label correlation: {self.use_label_correlation}")
         print(f"  - Enhanced diversity: {self.enhanced_diversity}")
-        
+
         # Shared layers (L1-L3)
         self.shared_l3 = nn.Sequential(*list(backbone.children())[:-6])
 
@@ -180,7 +188,7 @@ class MultiLabelMEDAFv2(nn.Module):
         self.gate_l3 = copy.deepcopy(self.shared_l3)
         self.gate_l4 = copy.deepcopy(self.branch1_l4)
         self.gate_l5 = copy.deepcopy(self.branch1_l5)
-        
+
         # Configurable gating mechanism
         if self.use_per_class_gating:
             # Per-class gating
@@ -188,9 +196,11 @@ class MultiLabelMEDAFv2(nn.Module):
                 feature_dim=feature_dim,
                 num_classes=self.num_classes,
                 num_experts=3,
-                dropout=args.get("gating_dropout", 0.1)
+                dropout=args.get("gating_dropout", 0.1),
             )
-            print(f"  - Using per-class gating with {self.num_classes} class-specific gates")
+            print(
+                f"  - Using per-class gating with {self.num_classes} class-specific gates"
+            )
         else:
             # Global gating (original MEDAF style)
             self.gate_cls = nn.Sequential(
@@ -198,25 +208,25 @@ class MultiLabelMEDAFv2(nn.Module):
                 Classifier(int(feature_dim / 4), 3, bias=True),
             )
             print(f"  - Using global gating (original MEDAF style)")
-        
+
         # Optional label correlation module
         if self.use_label_correlation:
             self.label_correlation = LabelCorrelationModule(
                 num_classes=self.num_classes,
-                embedding_dim=args.get("label_embedding_dim", 64)
+                embedding_dim=args.get("label_embedding_dim", 64),
             )
             print(f"  - Using label correlation module")
 
     def forward(self, x, y=None, return_ft=False, return_attention_weights=False):
         """
         Forward pass with configurable gating
-        
+
         Args:
             x: Input tensor [B, C, H, W]
             y: Multi-hot labels [B, num_classes] or None
             return_ft: Whether to return features
             return_attention_weights: Whether to return attention weights
-            
+
         Returns:
             Dictionary with outputs and optional attention weights
         """
@@ -263,19 +273,21 @@ class MultiLabelMEDAFv2(nn.Module):
         # Configurable gating mechanism
         if self.use_per_class_gating:
             # Per-class gating
-            gate_weights, gate_logits = self.per_class_gating(gate_features, self.gate_temp)
-            
+            gate_weights, gate_logits = self.per_class_gating(
+                gate_features, self.gate_temp
+            )
+
             # Apply per-class weights
             expert_stack = torch.stack(expert_logits, dim=-1)  # [B, num_classes, 3]
             fused_logits = (expert_stack * gate_weights).sum(dim=-1)  # [B, num_classes]
-            
+
             # For compatibility with original interface
             gate_pred = gate_weights.mean(dim=1)  # [B, 3] - average across classes
-            
+
         else:
             # Global gating (original MEDAF)
             gate_pred = F.softmax(self.gate_cls(gate_features) / self.gate_temp, dim=1)
-            
+
             gate_logits_stack = torch.stack(
                 [b1_logits.detach(), b2_logits.detach(), b3_logits.detach()], dim=-1
             )
@@ -286,24 +298,24 @@ class MultiLabelMEDAFv2(nn.Module):
 
         # Prepare outputs
         logits_list = expert_logits + [fused_logits]
-        
+
         outputs = {
             "logits": logits_list,
             "gate_pred": gate_pred,
             "cams_list": cams_list,
-            "gating_type": "per_class" if self.use_per_class_gating else "global"
+            "gating_type": "per_class" if self.use_per_class_gating else "global",
         }
-        
+
         if y is not None:
             outputs["multi_label_cams"] = multi_label_cams
-        
+
         if return_ft and y is None:
             outputs["fts"] = fts
-            
+
         if return_attention_weights and self.use_per_class_gating:
             outputs["per_class_weights"] = gate_weights
             outputs["gate_logits"] = gate_logits
-        
+
         # Label correlation features (if enabled)
         if self.use_label_correlation:
             corr_features = self.label_correlation()
@@ -315,22 +327,24 @@ class MultiLabelMEDAFv2(nn.Module):
         """Extract CAMs for positive classes - same as v1"""
         batch_size = targets.size(0)
         extracted_cams = []
-        
+
         for expert_idx, expert_cams in enumerate(cams_list):
             expert_extracted = []
-            
+
             for batch_idx in range(batch_size):
                 positive_classes = torch.where(targets[batch_idx] == 1)[0]
-                
+
                 if len(positive_classes) > 0:
                     sample_cams = expert_cams[batch_idx, positive_classes]
                     expert_extracted.append(sample_cams)
                 else:
                     H, W = expert_cams.shape[-2:]
-                    expert_extracted.append(torch.zeros(1, H, W, device=expert_cams.device))
-            
+                    expert_extracted.append(
+                        torch.zeros(1, H, W, device=expert_cams.device)
+                    )
+
             extracted_cams.append(expert_extracted)
-        
+
         return extracted_cams
 
     def get_params(self, prefix="extractor"):
@@ -347,14 +361,14 @@ class MultiLabelMEDAFv2(nn.Module):
             + list(self.gate_l4.parameters())
             + list(self.gate_l5.parameters())
         )
-        
+
         # Add gating-specific parameters to extractor
         if self.use_per_class_gating:
             base_extractor_params.extend(list(self.per_class_gating.parameters()))
-        
+
         if self.use_label_correlation:
             base_extractor_params.extend(list(self.label_correlation.parameters()))
-        
+
         extractor_params_ids = list(map(id, base_extractor_params))
         classifier_params = filter(
             lambda p: id(p) not in extractor_params_ids, self.parameters()
@@ -373,9 +387,11 @@ class MultiLabelMEDAFv2(nn.Module):
             "use_label_correlation": self.use_label_correlation,
             "enhanced_diversity": self.enhanced_diversity,
         }
-        
+
         if self.use_per_class_gating:
-            total_gate_params = sum(p.numel() for p in self.per_class_gating.parameters())
+            total_gate_params = sum(
+                p.numel() for p in self.per_class_gating.parameters()
+            )
             summary["gating_parameters"] = total_gate_params
-        
+
         return summary

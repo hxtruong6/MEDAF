@@ -8,14 +8,14 @@ from .net import build_backbone, conv1x1, Classifier
 class MultiLabelMEDAF(nn.Module):
     """
     Multi-Label version of MEDAF (Multi-Expert Diverse Attention Fusion)
-    
+
     Key changes from original MEDAF:
     1. Support for multi-hot label targets
     2. BCEWithLogitsLoss instead of CrossEntropyLoss
     3. Multi-label attention diversity computation
     4. Per-sample CAM extraction for multiple positive classes
     """
-    
+
     def __init__(self, args=None):
         super(MultiLabelMEDAF, self).__init__()
         backbone, feature_dim, self.cam_size = build_backbone(
@@ -26,9 +26,11 @@ class MultiLabelMEDAF(nn.Module):
         )
         self.img_size = args["img_size"]
         self.gate_temp = args["gate_temp"]
-        self.num_classes = args["num_classes"]  # Changed from num_known to num_classes for clarity
+        self.num_classes = args[
+            "num_classes"
+        ]  # Changed from num_known to num_classes for clarity
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        
+
         # Shared layers (L1-L3)
         self.shared_l3 = nn.Sequential(*list(backbone.children())[:-6])
 
@@ -59,12 +61,12 @@ class MultiLabelMEDAF(nn.Module):
     def forward(self, x, y=None, return_ft=False):
         """
         Forward pass for multi-label MEDAF
-        
+
         Args:
             x: Input tensor [B, C, H, W]
             y: Multi-hot labels [B, num_classes] or None
             return_ft: Whether to return features
-            
+
         Returns:
             Dictionary containing logits, gate predictions, and CAMs/features
         """
@@ -123,20 +125,20 @@ class MultiLabelMEDAF(nn.Module):
         gate_logits = gate_logits.sum(-1)
 
         logits_list = [b1_logits, b2_logits, b3_logits, gate_logits]
-        
+
         if return_ft and y is None:
             outputs = {
-                "logits": logits_list, 
-                "gate_pred": gate_pred, 
+                "logits": logits_list,
+                "gate_pred": gate_pred,
                 "fts": fts,
-                "cams_list": cams_list
+                "cams_list": cams_list,
             }
         else:
             outputs = {
-                "logits": logits_list, 
-                "gate_pred": gate_pred, 
+                "logits": logits_list,
+                "gate_pred": gate_pred,
                 "multi_label_cams": multi_label_cams,
-                "cams_list": cams_list
+                "cams_list": cams_list,
             }
 
         return outputs
@@ -144,35 +146,39 @@ class MultiLabelMEDAF(nn.Module):
     def _extract_multilabel_cams(self, cams_list, targets):
         """
         Extract CAMs for all positive classes in multi-label setting
-        
+
         Args:
             cams_list: List of CAMs from 3 experts [B, num_classes, H, W]
             targets: Multi-hot labels [B, num_classes]
-            
+
         Returns:
             extracted_cams: List of CAMs for positive classes per expert
         """
         batch_size = targets.size(0)
         extracted_cams = []
-        
+
         for expert_idx, expert_cams in enumerate(cams_list):
             expert_extracted = []
-            
+
             for batch_idx in range(batch_size):
                 # Find positive class indices for this sample
                 positive_classes = torch.where(targets[batch_idx] == 1)[0]
-                
+
                 if len(positive_classes) > 0:
                     # Extract CAMs for positive classes
-                    sample_cams = expert_cams[batch_idx, positive_classes]  # [num_positive, H, W]
+                    sample_cams = expert_cams[
+                        batch_idx, positive_classes
+                    ]  # [num_positive, H, W]
                     expert_extracted.append(sample_cams)
                 else:
                     # If no positive classes, create zero tensor
                     H, W = expert_cams.shape[-2:]
-                    expert_extracted.append(torch.zeros(1, H, W, device=expert_cams.device))
-            
+                    expert_extracted.append(
+                        torch.zeros(1, H, W, device=expert_cams.device)
+                    )
+
             extracted_cams.append(expert_extracted)
-        
+
         return extracted_cams
 
     def get_params(self, prefix="extractor"):
