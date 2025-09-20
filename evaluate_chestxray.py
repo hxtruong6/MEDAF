@@ -392,11 +392,30 @@ def save_medical_results(results, output_file, pathologies):
 def main():
     """Main evaluation function"""
     parser = argparse.ArgumentParser(description='Evaluate Multi-Label MEDAF on Chest X-Ray Data')
-    parser.add_argument('--dataset', default='nih', choices=['nih', 'chexpert', 'mimic'],
-                       help='Chest X-ray dataset to use')
-    parser.add_argument('--epochs', type=int, default=20,
-                       help='Number of training epochs')
-    parser.add_argument('--batch_size', type=int, default=16,
+    parser.add_argument(
+        "--dataset",
+        default="nih",
+        choices=["nih", "chexpert", "mimic"],
+        help="Chest X-ray dataset to use",
+    )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=20,
+        help="Number of training epochs",
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=16,
+        help="Batch size",
+    )
+    parser.add_argument(
+        "--img_size",
+        type=int,
+        default=224,
+        help="Image size",
+    )
                        help='Batch size')
     parser.add_argument('--img_size', type=int, default=224,
                        help='Image size')
@@ -408,9 +427,9 @@ def main():
                        help='Number of data loading workers')
     parser.add_argument('--max_samples', type=int, default=1000,
                        help='Maximum samples for quick testing')
-    
+
     args = parser.parse_args()
-    
+
     # Configuration
     config = {
         'dataset_name': args.dataset,
@@ -424,11 +443,11 @@ def main():
         'loss_keys': ["b1", "b2", "b3", "gate", "divAttn", "total"],
         'acc_keys': ["acc1", "acc2", "acc3", "accGate"]
     }
-    
+
     # Set random seed
     torch.manual_seed(42)
     np.random.seed(42)
-    
+
     # Setup environment
     if not setup_environment():
         print("\n❌ Environment setup failed")
@@ -436,10 +455,10 @@ def main():
         print("1. TorchXRayVision is installed: pip install torchxrayvision")
         print("2. Real dataset is downloaded: python download_real_chestxray.py")
         return
-    
+
     # Run evaluation
     results = run_chestxray_evaluation(config)
-    
+
     print(f"\n🎉 Chest X-Ray Multi-Label MEDAF Evaluation Complete!")
     print(f"Results demonstrate the effectiveness of per-class gating on real medical data.")
 

@@ -1,0 +1,11 @@
+---
+description: Multi-Label MEDAF Implementation Guide
+globs:
+alwaysApply: true
+---
+
+- Do not create unneccesary files.
+- Try to adapt with the existing code.
+- If you are not sure about the code, ask me to for clarification before making any changes.
+- Comment the code to make it more readable. Do not create unnecessary comments.
+- Propose best practices if you have better ideas or suggestions.

@@ -1,0 +1,19 @@
+# Requirements for ChestX-ray14 Dataset Analysis Scripts
+
+# Core data analysis
+pandas>=1.3.0
+numpy>=1.21.0
+
+# Visualization
+matplotlib>=3.5.0
+seaborn>=0.11.0
+
+# Optional: For advanced analysis
+scikit-learn>=1.0.0
+scipy>=1.7.0
+
+# Optional: For interactive plots
+plotly>=5.0.0
+
+# Optional: For progress bars
+tqdm>=4.62.0
