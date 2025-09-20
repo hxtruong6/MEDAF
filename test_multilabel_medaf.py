@@ -4,12 +4,18 @@ Test script for Multi-Label MEDAF implementation
 Validates Phase 1 modifications with synthetic multi-label data
 """
 
+import ast
+import os
+import sys
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.utils.data as data
-import numpy as np
-import sys
-import os
+import torchvision.transforms as transforms
+from PIL import Image
 from sklearn.datasets import make_multilabel_classification
 from sklearn.preprocessing import StandardScaler
 
@@ -18,10 +24,40 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from core.multilabel_net import MultiLabelMEDAF
 from core.multilabel_train import (
-    train_multilabel,
-    multiLabelAttnDiv,
     multiLabelAccuracy,
+    multiLabelAttnDiv,
 )
+
+
+# Paths and configuration for real ChestX-ray14 data integration
+KNOWN_LABELS = [
+    "Atelectasis",
+    "Cardiomegaly",
+    "Effusion",
+    "Infiltration",
+    "Mass",
+    "Nodule",
+    "Pneumonia",
+    "Pneumothorax",
+]
+
+CHESTXRAY_IMAGE_ROOT = Path("datasets/data/NIH/images-224")
+CHESTXRAY_CSV_CANDIDATES = [
+    Path("datasets/data/NIH/chestxray_train_known.csv"),
+    Path("datasets/data/NIH/chestxray_train_new.csv"),
+]
+
+# Enable real-data smoke test by setting MEDAF_USE_CHESTXRAY_DATA=1
+USE_REAL_DATA = os.environ.get("MEDAF_USE_CHESTXRAY_DATA", "0") == "1"
+
+
+def resolve_chestxray_known_csv():
+    """Return the first available CSV path for the known-label split."""
+
+    for candidate in CHESTXRAY_CSV_CANDIDATES:
+        if candidate.exists():
+            return candidate
+    return None
 
 
 class SyntheticMultiLabelDataset(data.Dataset):
@@ -70,6 +106,99 @@ class SyntheticMultiLabelDataset(data.Dataset):
 
     def __getitem__(self, idx):
         return self.images[idx], self.labels[idx]
+
+
+class ChestXrayKnownDataset(data.Dataset):
+    """Dataset that reads ChestX-ray14 samples from the known-label CSV split."""
+
+    def __init__(
+        self,
+        csv_path,
+        image_root,
+        img_size=224,
+        max_samples=64,
+        transform=None,
+    ):
+        self.csv_path = Path(csv_path)
+        self.image_root = Path(image_root)
+        self.img_size = img_size
+
+        if not self.csv_path.exists():
+            raise FileNotFoundError(f"ChestX-ray CSV not found: {self.csv_path}")
+        if not self.image_root.exists():
+            raise FileNotFoundError(
+                f"ChestX-ray image directory not found: {self.image_root}"
+            )
+
+        if transform is None:
+            self.transform = transforms.Compose(
+                [
+                    transforms.Resize((img_size, img_size)),
+                    transforms.ToTensor(),
+                    transforms.Normalize(
+                        mean=[0.485, 0.456, 0.406],
+                        std=[0.229, 0.224, 0.225],
+                    ),
+                ]
+            )
+        else:
+            self.transform = transform
+
+        self.label_to_idx = {label: idx for idx, label in enumerate(KNOWN_LABELS)}
+        self.num_classes = len(self.label_to_idx)
+
+        df = pd.read_csv(self.csv_path)
+        if "known_labels" not in df.columns:
+            raise ValueError(
+                "Expected 'known_labels' column in CSV. Run create_chestxray_splits.py first."
+            )
+
+        if max_samples is not None and max_samples < len(df):
+            df = df.sample(n=max_samples, random_state=42).reset_index(drop=True)
+        else:
+            df = df.reset_index(drop=True)
+
+        self.records = df.to_dict("records")
+
+    @staticmethod
+    def _parse_label_list(raw_value):
+        if isinstance(raw_value, list):
+            return raw_value
+        if pd.isna(raw_value):
+            return []
+        if isinstance(raw_value, str):
+            raw_value = raw_value.strip()
+            if not raw_value:
+                return []
+            try:
+                parsed = ast.literal_eval(raw_value)
+                if isinstance(parsed, (list, tuple)):
+                    return list(parsed)
+                if isinstance(parsed, str):
+                    return [parsed]
+            except (ValueError, SyntaxError):
+                pass
+            return [item.strip() for item in raw_value.split("|") if item.strip()]
+        return []
+
+    def __len__(self):
+        return len(self.records)
+
+    def __getitem__(self, idx):
+        record = self.records[idx]
+        image_path = self.image_root / record["Image Index"]
+        if not image_path.exists():
+            raise FileNotFoundError(f"Missing image: {image_path}")
+
+        image = Image.open(image_path).convert("RGB")
+        image = self.transform(image)
+
+        labels = torch.zeros(self.num_classes, dtype=torch.float32)
+        for label in self._parse_label_list(record.get("known_labels", [])):
+            if label in self.label_to_idx:
+                labels[self.label_to_idx[label]] = 1.0
+
+        return image, labels
 
 
 def test_model_forward():
@@ -217,34 +346,85 @@ def test_multilabel_accuracy():
     return True
 
 
+def test_chestxray_known_csv_loader():
+    """Verify that the known-label ChestX-ray CSV can be read and transformed."""
+
+    print("\n" + "=" * 50)
+    print("Testing ChestX-ray Known CSV Loader")
+    print("=" * 50)
+
+    csv_path = resolve_chestxray_known_csv()
+    if csv_path is None or not CHESTXRAY_IMAGE_ROOT.exists():
+        print("ChestX-ray CSV or image directory not found. Skipping real-data test.")
+        return True
+
+    dataset = ChestXrayKnownDataset(
+        csv_path=csv_path,
+        image_root=CHESTXRAY_IMAGE_ROOT,
+        img_size=224,
+        max_samples=12,
+    )
+
+    loader = data.DataLoader(dataset, batch_size=4, shuffle=False, num_workers=0)
+    batch = next(iter(loader))
+    images, targets = batch
+
+    print(f"Loaded batch images shape: {images.shape}")
+    print(f"Loaded batch targets shape: {targets.shape}")
+    print(f"Positive labels per sample: {targets.sum(dim=1)}")
+
+    if images.shape[1] != 3 or images.shape[2] != 224 or images.shape[3] != 224:
+        raise AssertionError("Unexpected image tensor shape from ChestXrayKnownDataset")
+
+    if targets.shape[1] != len(KNOWN_LABELS):
+        raise AssertionError("Target tensor does not match known label count")
+
+    print("✓ ChestX-ray CSV loader test PASSED")
+    return True
+
+
 def test_training_loop():
     """Test training loop with synthetic dataset"""
     print("\n" + "=" * 50)
     print("Testing Training Loop")
     print("=" * 50)
 
-    # Create synthetic dataset
-    dataset = SyntheticMultiLabelDataset(
-        num_samples=100, img_size=32, num_classes=8, avg_labels_per_sample=2
+    csv_path = resolve_chestxray_known_csv()
+    real_data_available = (
+        USE_REAL_DATA and csv_path is not None and CHESTXRAY_IMAGE_ROOT.exists()
     )
 
-    # Create data loader
+    if real_data_available:
+        print("Using ChestX-ray known-label split for training loop test")
+        dataset = ChestXrayKnownDataset(
+            csv_path=csv_path,
+            image_root=CHESTXRAY_IMAGE_ROOT,
+            img_size=224,
+            max_samples=48,
+        )
+        batch_size = 8
+    else:
+        print("Using synthetic dataset for training loop test")
+        dataset = SyntheticMultiLabelDataset(
+            num_samples=100, img_size=32, num_classes=8, avg_labels_per_sample=2
+        )
+        batch_size = 16
+
     train_loader = data.DataLoader(
         dataset,
-        batch_size=16,
+        batch_size=batch_size,
         shuffle=True,
-        num_workers=0,  # Avoid multiprocessing issues in test
+        num_workers=0,
     )
 
-    # Model configuration
     args = {
-        "img_size": 32,
+        "img_size": dataset.img_size,
         "backbone": "resnet18",
-        "num_classes": 8,
+        "num_classes": dataset.num_classes,
         "gate_temp": 100,
         "loss_keys": ["b1", "b2", "b3", "gate", "divAttn", "total"],
         "acc_keys": ["acc1", "acc2", "acc3", "accGate"],
-        "loss_wgts": [0.7, 1.0, 0.01],  # [expert, gate, diversity]
+        "loss_wgts": [0.7, 1.0, 0.01],
     }
 
     # Create model
@@ -362,6 +542,7 @@ def main():
             test_model_forward,
             test_attention_diversity,
             test_multilabel_accuracy,
+            test_chestxray_known_csv_loader,
             test_training_loop,
         ]
 
@@ -385,10 +566,7 @@ def main():
             print(
                 "🎉 ALL TESTS PASSED! Multi-Label MEDAF Phase 1 implementation is working correctly."
             )
-            print("\nYou can now:")
-            print("1. Train on real multi-label datasets")
-            print("2. Implement Phase 2 features (per-class gating)")
-            print("3. Add advanced research extensions")
+
         else:
             print("❌ Some tests failed. Please review the implementation.")
 

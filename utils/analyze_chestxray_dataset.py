@@ -86,13 +86,15 @@ class ChestXrayAnalyzer:
             self.df["Patient Age"].str.replace("Y", "").astype(int)
         )
 
+        # log 5 rows of the dataframe
+        print(self.df.head(5))
+        # log orginalImage[Width,Height]
+        # print(self.df["OriginalImage[Width"].head(5))
+        # print(self.df["Height]"].head(5))
+
         # Parse image dimensions
-        self.df["Image Width"] = (
-            self.df["OriginalImage[Width,Height]"].str.split(",").str[0].astype(int)
-        )
-        self.df["Image Height"] = (
-            self.df["OriginalImage[Width,Height]"].str.split(",").str[1].astype(int)
-        )
+        self.df["Image Width"] = self.df["OriginalImage[Width"].astype(int)
+        self.df["Image Height"] = self.df["Height]"].astype(int)
 
         print(f"✅ Dataset loaded successfully!")
         print(f"   Total images: {len(self.df):,}")
@@ -452,7 +454,7 @@ class ChestXrayAnalyzer:
             plt.savefig("chestxray_dataset_analysis.png", dpi=300, bbox_inches="tight")
             print("✅ Visualizations saved as 'chestxray_dataset_analysis.png'")
 
-        plt.show()
+        # plt.show()
 
     def generate_summary_report(self):
         """Generate a comprehensive summary report"""
@@ -540,8 +542,7 @@ class ChestXrayAnalyzer:
 def main():
     """Main function to run the analysis"""
     # Path to the CSV file
-    csv_path = "/home/s2320437/WORK/aidan-medaf/datasets/data/chestxray/NIH/Data_Entry_2017.csv"
-
+    csv_path = "datasets/data/NIH/Data_Entry_2017.csv"
     # Create analyzer instance
     analyzer = ChestXrayAnalyzer(csv_path)
 
