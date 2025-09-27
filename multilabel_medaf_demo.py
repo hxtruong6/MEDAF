@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""
-Multi-Label MEDAF Demo Script
-Demonstrates both Phase 1 and Phase 2 implementations with comparative analysis
-"""
+"""Multi-Label MEDAF Phase 1 training demo on NIH ChestX-ray14."""
 
+import ast
+import json
+from pathlib import Path
+from typing import Optional, Union
+
+import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.utils.data as data
-import numpy as np
-import matplotlib.pyplot as plt
+import torchvision.transforms as transforms
+from PIL import Image
 from sklearn.datasets import make_multilabel_classification
 from sklearn.preprocessing import StandardScaler
 
@@ -24,6 +28,115 @@ from core.multilabel_train_v2 import train_multilabel_v2, ComparativeTrainingFra
 from test_multilabel_medaf import SyntheticMultiLabelDataset
 
 
+KNOWN_LABELS = [
+    "Atelectasis",
+    "Cardiomegaly",
+    "Effusion",
+    "Infiltration",
+    "Mass",
+    "Nodule",
+    "Pneumonia",
+    "Pneumothorax",
+]
+
+DEFAULT_IMAGE_ROOT = Path("datasets/data/NIH/images-224")
+DEFAULT_KNOWN_CSV = Path("datasets/data/NIH/chestxray_train_known.csv")
+DEFAULT_CHECKPOINT_DIR = Path("checkpoints/medaf_phase1")
+
+
+class ChestXrayKnownDataset(data.Dataset):
+    """Dataset that reads the known-label ChestX-ray14 split for Phase 1 training."""
+
+    def __init__(
+        self,
+        csv_path: Path,
+        image_root: Path,
+        img_size: int = 224,
+        max_samples: Optional[int] = None,
+        transform=None,
+    ) -> None:
+        self.csv_path = Path(csv_path)
+        self.image_root = Path(image_root)
+        self.img_size = img_size
+        self.class_names = KNOWN_LABELS
+        self.num_classes = len(self.class_names)
+
+        if not self.csv_path.exists():
+            raise FileNotFoundError(f"ChestX-ray CSV not found: {self.csv_path}")
+        if not self.image_root.exists():
+            raise FileNotFoundError(
+                f"ChestX-ray image directory not found: {self.image_root}"
+            )
+
+        if transform is None:
+            self.transform = transforms.Compose(
+                [
+                    transforms.Resize((img_size, img_size)),
+                    transforms.ToTensor(),
+                    transforms.Normalize(
+                        mean=[0.485, 0.456, 0.406],
+                        std=[0.229, 0.224, 0.225],
+                    ),
+                ]
+            )
+        else:
+            self.transform = transform
+
+        df = pd.read_csv(self.csv_path)
+        if "known_labels" not in df.columns:
+            raise ValueError(
+                "Expected 'known_labels' column in CSV. Run utils/create_chestxray_splits.py first."
+            )
+
+        if max_samples is not None and max_samples < len(df):
+            df = df.sample(n=max_samples, random_state=42).reset_index(drop=True)
+        else:
+            df = df.reset_index(drop=True)
+
+        self.records = df.to_dict("records")
+        self.label_to_idx = {label: idx for idx, label in enumerate(self.class_names)}
+
+    @staticmethod
+    def _parse_label_list(raw_value):
+        if isinstance(raw_value, list):
+            return raw_value
+        if pd.isna(raw_value):
+            return []
+        if isinstance(raw_value, str):
+            raw_value = raw_value.strip()
+            if not raw_value:
+                return []
+            try:
+                parsed = ast.literal_eval(raw_value)
+                if isinstance(parsed, (list, tuple)):
+                    return list(parsed)
+                if isinstance(parsed, str):
+                    return [parsed]
+            except (ValueError, SyntaxError):
+                pass
+            return [item.strip() for item in raw_value.split("|") if item.strip()]
+        return []
+
+    def __len__(self) -> int:
+        return len(self.records)
+
+    def __getitem__(self, idx):
+        record = self.records[idx]
+        image_path = self.image_root / record["Image Index"]
+        if not image_path.exists():
+            raise FileNotFoundError(f"Missing image: {image_path}")
+
+        image = Image.open(image_path).convert("RGB")
+        image = self.transform(image)
+
+        labels = torch.zeros(self.num_classes, dtype=torch.float32)
+        for label in self._parse_label_list(record.get("known_labels", [])):
+            if label in self.label_to_idx:
+                labels[self.label_to_idx[label]] = 1.0
+
+        return image, labels
+
+
 class MultiLabelMEDAFDemo:
     """
     Comprehensive demo for Multi-Label MEDAF
@@ -31,47 +144,95 @@ class MultiLabelMEDAFDemo:
 
     def __init__(self, config):
         self.config = config
+        self.config.setdefault("data_source", "chestxray")
+        self.config.setdefault("img_size", 224)
+        self.config.setdefault("num_classes", len(KNOWN_LABELS))
+        self.config.setdefault("val_ratio", 0.1)
+        self.config.setdefault("num_workers", 0)
+        self.config.setdefault("checkpoint_dir", str(DEFAULT_CHECKPOINT_DIR))
+        self.config.setdefault("phase1_checkpoint", "medaf_phase1_chestxray.pt")
+        self.config.setdefault("num_samples", 1000)
+        self.config.setdefault("avg_labels_per_sample", 3)
+
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.results = {}
+        self.train_loader = None
+        self.val_loader = None
+        self.test_loader = None
+        self.dataset_name = None
+        self.class_names = KNOWN_LABELS
 
     def create_dataset(self):
-        """Create multi-label dataset for demonstration"""
-        print("Creating Multi-Label Dataset...")
+        """Create train/validation loaders for Phase 1."""
 
-        dataset = SyntheticMultiLabelDataset(
-            num_samples=self.config["num_samples"],
-            img_size=self.config["img_size"],
-            num_classes=self.config["num_classes"],
-            avg_labels_per_sample=self.config["avg_labels_per_sample"],
-            random_state=42,
-        )
+        data_source = self.config.get("data_source", "chestxray").lower()
 
-        # Split into train/test
-        train_size = int(0.8 * len(dataset))
-        test_size = len(dataset) - train_size
+        if data_source == "chestxray":
+            csv_path = Path(self.config.get("known_csv", DEFAULT_KNOWN_CSV))
+            image_root = Path(self.config.get("image_root", DEFAULT_IMAGE_ROOT))
+            max_samples = self.config.get("max_samples")
+            if isinstance(max_samples, str):
+                max_samples = int(max_samples)
+            print(f"Loading ChestX-ray14 known-label split from {csv_path}")
+            dataset = ChestXrayKnownDataset(
+                csv_path=csv_path,
+                image_root=image_root,
+                img_size=self.config.get("img_size", 224),
+                max_samples=max_samples,
+            )
+            self.dataset_name = "ChestX-ray14 (known labels)"
+            self.class_names = dataset.class_names
+            self.config["num_classes"] = dataset.num_classes
+            self.config["img_size"] = dataset.img_size
+        else:
+            print(
+                "ChestX-ray data not requested or unavailable. Falling back to synthetic dataset."
+            )
+            dataset = SyntheticMultiLabelDataset(
+                num_samples=self.config.get("num_samples", 1000),
+                img_size=self.config.get("img_size", 32),
+                num_classes=self.config.get("num_classes", 8),
+                avg_labels_per_sample=self.config.get("avg_labels_per_sample", 3),
+                random_state=42,
+            )
+            self.dataset_name = "Synthetic"
+            self.class_names = [f"class_{i}" for i in range(dataset.num_classes)]
 
-        train_dataset, test_dataset = data.random_split(
+        val_ratio = float(self.config.get("val_ratio", 0.1))
+        val_size = max(1, int(len(dataset) * val_ratio))
+        train_size = len(dataset) - val_size
+
+        train_dataset, val_dataset = data.random_split(
             dataset,
-            [train_size, test_size],
+            [train_size, val_size],
             generator=torch.Generator().manual_seed(42),
         )
 
-        # Create data loaders
+        batch_size = self.config.get("batch_size", 16)
+        num_workers = self.config.get("num_workers", 4)
+        pin_memory = torch.cuda.is_available()
+
         self.train_loader = data.DataLoader(
             train_dataset,
-            batch_size=self.config["batch_size"],
+            batch_size=batch_size,
             shuffle=True,
-            num_workers=0,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
         )
 
-        self.test_loader = data.DataLoader(
-            test_dataset,
-            batch_size=self.config["batch_size"],
+        self.val_loader = data.DataLoader(
+            val_dataset,
+            batch_size=batch_size,
             shuffle=False,
-            num_workers=0,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
         )
 
-        print(f"Dataset created: {train_size} train, {test_size} test samples")
+        self.test_loader = self.val_loader
+
+        print(
+            f"Dataset prepared: {train_size} train / {val_size} val samples ({self.dataset_name})"
+        )
 
     def demo_phase1(self):
         """Demonstrate Phase 1: Basic Multi-Label MEDAF"""
@@ -115,13 +276,58 @@ class MultiLabelMEDAFDemo:
             if epoch % 2 == 0:
                 print(f"Epoch {epoch}: Loss={metrics:.4f}")
 
+        final_loss = phase1_metrics[-1] if phase1_metrics else float("nan")
+        checkpoint_path = self.save_model(model, args, phase1_metrics)
+
         self.results["phase1"] = {
             "model": model,
-            "final_loss": phase1_metrics[-1],
+            "final_loss": final_loss,
             "metrics_history": phase1_metrics,
+            "checkpoint": str(checkpoint_path),
         }
 
-        print(f"Phase 1 Final Loss: {phase1_metrics[-1]:.4f}")
+        if phase1_metrics:
+            print(f"Phase 1 Final Loss: {final_loss:.4f}")
+        else:
+            print("Phase 1 completed with zero epochs (no training performed)")
+        print(f"Phase 1 checkpoint saved to: {checkpoint_path}")
+        print(
+            "Use load_phase1_checkpoint(CheckpointPath) to reload this model for evaluation."
+        )
+
+    def save_model(self, model, args, loss_history):
+        ckpt_dir = Path(self.config["checkpoint_dir"])
+        ckpt_dir.mkdir(parents=True, exist_ok=True)
+        checkpoint_path = ckpt_dir / self.config["phase1_checkpoint"]
+
+        payload = {
+            "state_dict": model.state_dict(),
+            "args": args,
+            "class_names": self.class_names,
+            "dataset": self.dataset_name,
+        }
+        torch.save(payload, checkpoint_path)
+
+        metadata = {
+            "dataset": self.dataset_name,
+            "class_names": self.class_names,
+            "num_epochs": self.config["num_epochs"],
+            "batch_size": self.config.get("batch_size"),
+            "learning_rate": self.config.get("learning_rate"),
+            "loss_history": [float(loss) for loss in loss_history],
+            "device": str(self.device),
+            "checkpoint": str(checkpoint_path),
+            "config": {
+                k: v
+                for k, v in self.config.items()
+                if isinstance(v, (int, float, str, bool))
+            },
+        }
+        metadata_path = checkpoint_path.with_suffix(".json")
+        with metadata_path.open("w", encoding="utf-8") as fp:
+            json.dump(metadata, fp, indent=2)
+
+        return checkpoint_path
 
     def demo_phase2_comparative(self):
         """Demonstrate Phase 2: Comparative Analysis"""
@@ -312,6 +518,12 @@ class MultiLabelMEDAFDemo:
             print("Phase 2 results not available for plotting")
             return
 
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError as exc:
+            print(f"Matplotlib not available: {exc}")
+            return
+
         plt.figure(figsize=(15, 5))
 
         # Loss curves
@@ -366,6 +578,8 @@ class MultiLabelMEDAFDemo:
         if "phase1" in self.results:
             print("\n📊 Phase 1 (Basic Multi-Label MEDAF):")
             print(f"   Final Loss: {self.results['phase1']['final_loss']:.4f}")
+            if "checkpoint" in self.results["phase1"]:
+                print(f"   Checkpoint: {self.results['phase1']['checkpoint']}")
 
         # Phase 2 summary
         if "phase2" in self.results:
@@ -406,9 +620,12 @@ class MultiLabelMEDAFDemo:
                         "   ℹ️  Results may vary with longer training and real datasets"
                     )
 
+        train_count = len(self.train_loader.dataset) if self.train_loader else 0
+        val_count = len(self.val_loader.dataset) if self.val_loader else 0
+
         print(f"\n🔧 Configuration Used:")
         print(
-            f"   Dataset: {self.config['num_samples']} samples, {self.config['num_classes']} classes"
+            f"   Dataset: {self.dataset_name} | train {train_count}, val {val_count}, {self.config['num_classes']} classes"
         )
         print(
             f"   Training: {self.config['num_epochs']} epochs, batch size {self.config['batch_size']}"
@@ -432,7 +649,10 @@ class MultiLabelMEDAFDemo:
     def run_demo(self):
         """Run complete demonstration"""
         print("🎬 Multi-Label MEDAF Complete Demonstration")
-        print("Phase 1: Basic Multi-Label + Phase 2: Per-Class Gating")
+        if self.config.get("run_phase2"):
+            print("Phase 1: Basic Multi-Label + Phase 2: Per-Class Gating")
+        else:
+            print("Phase 1: Basic Multi-Label Training")
 
         # Create dataset
         self.create_dataset()
@@ -441,19 +661,43 @@ class MultiLabelMEDAFDemo:
         self.demo_phase1()
 
         # Demo Phase 2 with comparative analysis
-        self.demo_phase2_comparative()
+        if self.config.get("run_phase2"):
+            self.demo_phase2_comparative()
 
         # Analyze attention patterns
-        self.analyze_attention_patterns()
+        if self.config.get("run_phase2"):
+            self.analyze_attention_patterns()
 
         # Plot results
-        try:
-            self.plot_training_curves()
-        except Exception as e:
-            print(f"Plotting failed: {e} (matplotlib may not be available)")
+        if self.config.get("run_phase2"):
+            try:
+                self.plot_training_curves()
+            except Exception as e:
+                print(f"Plotting failed: {e} (matplotlib may not be available)")
 
         # Final summary
         self.print_final_summary()
+
+
+def load_phase1_checkpoint(
+    checkpoint_path: Union[str, Path],
+    device: Union[str, torch.device, None] = None,
+):
+    """Load a saved Phase 1 MEDAF checkpoint."""
+
+    device_obj = torch.device(device) if device else torch.device("cpu")
+    checkpoint = torch.load(checkpoint_path, map_location=device_obj)
+
+    args = checkpoint.get("args")
+    if args is None:
+        raise KeyError("Checkpoint is missing 'args'.")
+
+    model = MultiLabelMEDAF(args)
+    model.load_state_dict(checkpoint["state_dict"])
+    model.to(device_obj)
+    model.eval()
+
+    return model, checkpoint
 
 
 def main():
@@ -461,20 +705,31 @@ def main():
 
     # Demo configuration
     config = {
-        "num_samples": 200,
-        "img_size": 32,
-        "num_classes": 8,
-        "avg_labels_per_sample": 3,
-        "batch_size": 16,
-        "num_epochs": 8,  # Short for demo
-        "learning_rate": 0.001,
+        "data_source": "chestxray",
+        "known_csv": str(DEFAULT_KNOWN_CSV),
+        "image_root": str(DEFAULT_IMAGE_ROOT),
+        "batch_size": 32,
+        "num_epochs": 5,
+        "learning_rate": 1e-4,
+        "val_ratio": 0.1,
+        "num_workers": 2,
+        # "max_samples": None,  # Set to an int for quicker experiments
+        "max_samples": 1000,
+        "phase1_checkpoint": "medaf_phase1_chestxray.pt",
+        "checkpoint_dir": str(DEFAULT_CHECKPOINT_DIR),
+        "run_phase2": False,
     }
 
     print("Multi-Label MEDAF Comprehensive Demo")
     print("====================================")
-    print("This demo showcases both phases of Multi-Label MEDAF:")
-    print("• Phase 1: Basic multi-label classification with global gating")
-    print("• Phase 2: Per-class gating with comparative analysis")
+    if config.get("run_phase2"):
+        print("This demo showcases both phases of Multi-Label MEDAF:")
+        print("• Phase 1: Basic multi-label classification with global gating")
+        print("• Phase 2: Per-class gating with comparative analysis")
+    else:
+        print(
+            "This run focuses on Phase 1: training MEDAF on ChestX-ray14 known labels."
+        )
     print(f"\nConfiguration: {config}")
 
     # Set random seed for reproducibility
