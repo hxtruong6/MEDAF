@@ -1,0 +1,17 @@
+conda 23.11.0
+Starting Jupyter Lab on port 10888...
+Jupyter PID: 453175
+Jupyter URL and token:
+[I 2025-09-27 16:41:34.863 ServerApp] http://localhost:10888/lab?token=4dc85a9e7ec4b84824245de2182ac7c904b9722e016dab6d
+        http://localhost:10888/lab?token=4dc85a9e7ec4b84824245de2182ac7c904b9722e016dab6d
+Starting reverse SSH tunnel to d053-198.jaist.ac.jp...
+SSH PID: 453182
+Shutting down...
+Shutting down...
+
+=================================== RESOURCE INFORMATION ===================================
+ Requested Resource:
+ mem=64000000kb,walltime=168:00:00,ncpus=16,place=pack 
+ Used Resource: 
+ mem=114120kb,walltime=00:03:58,ncpus=16,cpupercent=10,vmem=368172kb
+============================================================================================
