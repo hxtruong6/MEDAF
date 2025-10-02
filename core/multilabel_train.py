@@ -188,7 +188,7 @@ def train_multilabel(train_loader, model, criterion, optimizer, args, device=Non
 
         # Print progress
         if i % 50 == 0:  # Print every 50 batches
-            tmp_str = f"Batch [{i}/{len(train_loader)}] "
+            tmp_str = f"\nBatch [{i}/{len(train_loader)}] "
             tmp_str += "< Training Loss >\n"
             for k, v in loss_meter.items():
                 tmp_str += f"{k}:{v.value:.4f} "

@@ -10,6 +10,8 @@ __pycache__/
 # C extensions
 *.so
 
+# Checkpoint files
+*.pt
 # Distribution / packaging
 .Python
 build/

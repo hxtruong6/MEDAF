@@ -1,0 +1,70 @@
+{
+  "overall": {
+    "subset_accuracy": 0.5600000023841858,
+    "hamming_accuracy": 0.9237499833106995,
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1_score": 0.0,
+    "average_loss": 0.26788587495684624
+  },
+  "per_class": {
+    "precision": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "recall": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "f1_score": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "per_expert": {
+    "expert1": {
+      "subset_accuracy": 0.5600000023841858,
+      "hamming_accuracy": 0.9237499833106995
+    },
+    "expert2": {
+      "subset_accuracy": 0.550000011920929,
+      "hamming_accuracy": 0.9225000143051147
+    },
+    "expert3": {
+      "subset_accuracy": 0.5600000023841858,
+      "hamming_accuracy": 0.9237499833106995
+    },
+    "gate": {
+      "subset_accuracy": 0.5600000023841858,
+      "hamming_accuracy": 0.9237499833106995
+    }
+  },
+  "class_names": [
+    "Atelectasis",
+    "Cardiomegaly",
+    "Effusion",
+    "Infiltration",
+    "Mass",
+    "Nodule",
+    "Pneumonia",
+    "Pneumothorax"
+  ]
+}

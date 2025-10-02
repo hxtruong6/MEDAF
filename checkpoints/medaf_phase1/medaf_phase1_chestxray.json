@@ -1,0 +1,41 @@
+{
+  "dataset": "ChestX-ray14 (known labels)",
+  "class_names": [
+    "Atelectasis",
+    "Cardiomegaly",
+    "Effusion",
+    "Infiltration",
+    "Mass",
+    "Nodule",
+    "Pneumonia",
+    "Pneumothorax"
+  ],
+  "num_epochs": 5,
+  "batch_size": 32,
+  "learning_rate": 0.0001,
+  "loss_history": [
+    1.0223251798417834,
+    0.7620852707491981,
+    0.7459799035390218,
+    0.7424586243099637,
+    0.7446944374508327
+  ],
+  "device": "cuda",
+  "checkpoint": "/home/s2320437/WORK/aidan-medaf/checkpoints/medaf_phase1/medaf_phase1_chestxray.pt",
+  "config": {
+    "data_source": "chestxray",
+    "known_csv": "/home/s2320437/WORK/aidan-medaf/datasets/data/chestxray/NIH/chestxray_train_known.csv",
+    "image_root": "/home/s2320437/WORK/aidan-medaf/datasets/data/chestxray/NIH/images-224",
+    "batch_size": 32,
+    "num_epochs": 5,
+    "learning_rate": 0.0001,
+    "val_ratio": 0.1,
+    "num_workers": 2,
+    "max_samples": 1000,
+    "phase1_checkpoint": "medaf_phase1_chestxray.pt",
+    "checkpoint_dir": "/home/s2320437/WORK/aidan-medaf/checkpoints/medaf_phase1",
+    "run_phase2": false,
+    "num_classes": 8,
+    "img_size": 224
+  }
+}
