@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from .net import build_backbone, conv1x1, Classifier
+from .multilabel_novelty_detection import MultiLabelNoveltyDetector
 
 
 class MultiLabelMEDAF(nn.Module):
@@ -142,6 +143,153 @@ class MultiLabelMEDAF(nn.Module):
             }
 
         return outputs
+
+    def detect_novelty(self, x, novelty_detector=None, threshold=0.5):
+        """
+        Detect novel/unknown samples using hybrid scoring mechanism.
+
+        This method implements the core MEDAF novelty detection for multi-label classification:
+        1. Computes hybrid scores combining logit-based and feature-based information
+        2. Uses calibrated threshold to separate known from unknown samples
+        3. Handles different types of multi-label novelty (independent, mixed, combinatorial)
+
+        Args:
+            x: Input tensor [B, C, H, W]
+            novelty_detector: Pre-calibrated MultiLabelNoveltyDetector instance
+            threshold: Prediction threshold for binary classification (default: 0.5)
+
+        Returns:
+            Dictionary containing:
+            - is_novel: Boolean tensor [B] indicating novel samples
+            - novelty_scores: Hybrid scores [B] (higher = more known-like)
+            - novelty_types: List of novelty type strings
+            - predictions: Binary predictions [B, num_classes]
+            - confidence_scores: Per-label confidence scores [B, num_classes]
+        """
+        self.eval()
+
+        with torch.no_grad():
+            # Forward pass to get logits and CAMs
+            output_dict = self.forward(x, return_ft=True)
+            gate_logits = output_dict["logits"][-1]  # Use gating network output
+            cams_list = output_dict["cams_list"]  # CAMs from all experts
+
+            # Convert to predictions using sigmoid (multi-label setting)
+            probs = torch.sigmoid(gate_logits)
+            predicted_labels = (probs > threshold).float()
+
+            if novelty_detector is None:
+                # Create default detector if none provided
+                novelty_detector = MultiLabelNoveltyDetector(gamma=1.0, temperature=1.0)
+                print(
+                    "⚠️  Warning: No novelty detector provided. Using default detector without calibration."
+                )
+
+            # Detect novelty using hybrid scoring
+            if novelty_detector.is_calibrated:
+                is_novel, novelty_scores = novelty_detector.detect_novelty(
+                    gate_logits, cams_list, predicted_labels
+                )
+                novelty_types = novelty_detector.classify_novelty_type(
+                    predicted_labels, is_novel
+                )
+            else:
+                # Fallback: use simple threshold on max probability
+                max_probs = probs.max(dim=1)[0]
+                is_novel = max_probs < 0.5  # Simple threshold
+                novelty_scores = max_probs  # Use max probability as score
+                novelty_types = ["Unknown" if novel else "Known" for novel in is_novel]
+
+            # Compute per-label confidence scores
+            confidence_scores = probs
+
+            return {
+                "is_novel": is_novel,
+                "novelty_scores": novelty_scores,
+                "novelty_types": novelty_types,
+                "predictions": predicted_labels,
+                "confidence_scores": confidence_scores,
+                "logits": gate_logits,
+                "cams_list": cams_list,
+            }
+
+    def calibrate_novelty_detector(
+        self, val_loader, device, fpr_target=0.05, gamma=1.0, temperature=1.0
+    ):
+        """
+        Calibrate novelty detection threshold on validation data.
+
+        This method implements the threshold calibration process described in the guide:
+        1. Computes hybrid scores for all validation samples (known only)
+        2. Sets threshold at target FPR (e.g., 5th percentile for 5% FPR)
+        3. Returns calibrated detector ready for novelty detection
+
+        Args:
+            val_loader: Validation data loader (known samples only)
+            device: Device for computation
+            fpr_target: Target false positive rate (default: 0.05 for 5% FPR)
+            gamma: Weight for feature-based score in hybrid computation
+            temperature: Temperature for logit-based energy computation
+
+        Returns:
+            Calibrated MultiLabelNoveltyDetector instance
+        """
+        print(f"🎯 Calibrating novelty detector (FPR target: {fpr_target*100:.1f}%)")
+
+        # Create detector
+        detector = MultiLabelNoveltyDetector(gamma=gamma, temperature=temperature)
+
+        # Calibrate threshold
+        threshold = detector.calibrate_threshold(self, val_loader, device, fpr_target)
+
+        print(f"✅ Novelty detector calibrated with threshold: {threshold:.4f}")
+        return detector
+
+    def evaluate_novelty_detection(
+        self, known_loader, unknown_loader, device, detector=None
+    ):
+        """
+        Evaluate novelty detection performance.
+
+        This method implements the evaluation protocol for multi-label novelty detection:
+        1. Computes hybrid scores for known and unknown samples
+        2. Calculates AUROC and other detection metrics
+        3. Reports performance statistics
+
+        Args:
+            known_loader: Data loader for known samples
+            unknown_loader: Data loader for unknown samples
+            device: Device for computation
+            detector: Calibrated novelty detector (if None, will create default)
+
+        Returns:
+            Dictionary containing evaluation metrics
+        """
+        if detector is None:
+            print(
+                "⚠️  Warning: No novelty detector provided. Creating default detector."
+            )
+            detector = MultiLabelNoveltyDetector(gamma=1.0, temperature=1.0)
+
+        if not detector.is_calibrated:
+            print("⚠️  Warning: Detector not calibrated. Results may be unreliable.")
+
+        # Import evaluation function
+        from .multilabel_novelty_detection import evaluate_novelty_detection
+
+        # Run evaluation
+        results = evaluate_novelty_detection(
+            self, known_loader, unknown_loader, device, detector
+        )
+
+        print(f"📊 Novelty Detection Results:")
+        print(f"   AUROC: {results['auroc']:.4f}")
+        print(f"   Detection Accuracy: {results['detection_accuracy']:.4f}")
+        print(f"   Precision: {results['precision']:.4f}")
+        print(f"   Recall: {results['recall']:.4f}")
+        print(f"   F1-Score: {results['f1_score']:.4f}")
+
+        return results
 
     def _extract_multilabel_cams(self, cams_list, targets):
         """
