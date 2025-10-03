@@ -1,5 +1,6 @@
 import ast
 import json
+import time
 from pathlib import Path
 from typing import Optional, Union
 
@@ -60,8 +61,11 @@ KNOWN_LABELS = [
 ]
 
 DEFAULT_IMAGE_ROOT = Path(f"{CURRENT_DIR}/datasets/data/chestxray/NIH/images-224")
-DEFAULT_KNOWN_CSV = Path(
-    f"{CURRENT_DIR}/datasets/data/chestxray/NIH/chestxray_train_known.csv"
+DEFAULT_TRAIN_CSV = Path(
+    f"{CURRENT_DIR}/datasets/data/chestxray/NIH/chestxray_strategy1_train.csv"
+)
+DEFAULT_TEST_CSV = Path(
+    f"{CURRENT_DIR}/datasets/data/chestxray/NIH/chestxray_strategy1_test.csv"
 )
 
 DEFAULT_CHECKPOINT_DIR = Path(f"{CURRENT_DIR}/checkpoints/medaf_phase1")
@@ -82,7 +86,8 @@ np.random.seed(42)
 # Demo configuration
 config = {
     "data_source": "chestxray",
-    "known_csv": str(DEFAULT_KNOWN_CSV),
+    "train_csv": str(DEFAULT_TRAIN_CSV),
+    "test_csv": str(DEFAULT_TEST_CSV),
     "image_root": str(DEFAULT_IMAGE_ROOT),
     "batch_size": 32,
     "num_epochs": 20,
@@ -90,17 +95,24 @@ config = {
     "val_ratio": 0.1,
     "num_workers": 1,
     "max_samples": None,  # Set to an int for quicker experiments
-    # "max_samples": 1000,
+    # "max_samples": 100,
     "phase1_checkpoint": "medaf_phase1_chestxray.pt",
     "checkpoint_dir": str(DEFAULT_CHECKPOINT_DIR),
     "run_phase2": False,
 }
 
 
-def save_model(model, args, loss_history):
+def save_model(model, args, loss_history, suffix):
     ckpt_dir = Path(config["checkpoint_dir"])
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint_path = ckpt_dir / config["phase1_checkpoint"]
+
+    # Split the filename and extension to insert suffix before extension
+    base_filename = config["phase1_checkpoint"]
+    if base_filename.endswith(".pt"):
+        name_without_ext = base_filename[:-3]  # Remove .pt
+        checkpoint_path = ckpt_dir / f"{name_without_ext}{suffix}.pt"
+    else:
+        checkpoint_path = ckpt_dir / (base_filename + suffix)
 
     payload = {
         "state_dict": model.state_dict(),
@@ -186,10 +198,11 @@ def print_evaluation_results(results):
 
 
 def evaluate_medaf_final(model, data_loader, device, class_names, threshold=0.1):
-    """Final clean evaluation function - removes all duplicates"""
+    """Final clean evaluation function - optimized for performance"""
     model.eval()
 
-    print(f"🔍 FINAL EVALUATION (Threshold: {threshold})")
+    print(f"🔍 FINAL EVALUATION (Threshold: {threshold}) | Device: {device}")
+    print(f"📊 Total batches to process: {len(data_loader)}")
     print("=" * 50)
 
     all_predictions = []
@@ -197,10 +210,20 @@ def evaluate_medaf_final(model, data_loader, device, class_names, threshold=0.1)
     total_loss = 0.0
     num_batches = 0
 
+    # Create criterion once outside the loop for efficiency
+    criterion = nn.BCEWithLogitsLoss()
+
     with torch.no_grad():
         for batch_idx, (inputs, targets) in enumerate(data_loader):
-            inputs = inputs.to(device)
-            targets = targets.to(device)
+            # Show progress every 10% of batches
+            if batch_idx % max(1, len(data_loader) // 10) == 0:
+                progress = (batch_idx / len(data_loader)) * 100
+                print(
+                    f"   Progress: {progress:.1f}% ({batch_idx}/{len(data_loader)} batches)"
+                )
+
+            inputs = inputs.to(device, non_blocking=True)
+            targets = targets.to(device, non_blocking=True)
 
             # Forward pass
             output_dict = model(inputs, targets)
@@ -210,40 +233,47 @@ def evaluate_medaf_final(model, data_loader, device, class_names, threshold=0.1)
             probs = torch.sigmoid(gate_logits)
             pred_binary = (probs > threshold).float()
 
-            # Store data
-            all_predictions.append(pred_binary.cpu())
-            all_targets.append(targets.cpu())
+            # Store data (keep on GPU for now to reduce transfers)
+            all_predictions.append(pred_binary)
+            all_targets.append(targets)
 
             # Compute loss
-            criterion = nn.BCEWithLogitsLoss()
             loss = criterion(gate_logits, targets.float())
             total_loss += loss.item()
             num_batches += 1
 
-    # Concatenate all data
+    print("   📊 Concatenating predictions and computing metrics...")
+
+    # Concatenate all data (keep on GPU for faster computation)
     all_predictions = torch.cat(all_predictions, dim=0)
     all_targets = torch.cat(all_targets, dim=0)
 
-    # Compute metrics
+    print(
+        f"   📈 Processing {all_predictions.shape[0]} samples with {all_predictions.shape[1]} classes"
+    )
+
+    # Compute metrics on GPU for speed
     subset_acc = (all_predictions == all_targets).all(dim=1).float().mean().item()
     hamming_acc = (all_predictions == all_targets).float().mean().item()
 
-    # Per-class metrics
+    # Per-class metrics (vectorized computation on GPU)
     tp = (all_predictions * all_targets).sum(dim=0)
     fp = (all_predictions * (1 - all_targets)).sum(dim=0)
     fn = ((1 - all_predictions) * all_targets).sum(dim=0)
 
-    precision = torch.zeros_like(tp, dtype=torch.float32)
-    recall = torch.zeros_like(tp, dtype=torch.float32)
-    f1 = torch.zeros_like(tp, dtype=torch.float32)
+    # Vectorized precision/recall/f1 computation (avoid loops)
+    precision = torch.zeros_like(tp, dtype=torch.float32, device=device)
+    recall = torch.zeros_like(tp, dtype=torch.float32, device=device)
+    f1 = torch.zeros_like(tp, dtype=torch.float32, device=device)
 
-    for i in range(len(tp)):
-        if tp[i] + fp[i] > 0:
-            precision[i] = tp[i] / (tp[i] + fp[i])
-        if tp[i] + fn[i] > 0:
-            recall[i] = tp[i] / (tp[i] + fn[i])
-        if precision[i] + recall[i] > 0:
-            f1[i] = 2 * (precision[i] * recall[i]) / (precision[i] + recall[i])
+    # Use torch.where for vectorized conditional operations
+    precision = torch.where(tp + fp > 0, tp / (tp + fp), torch.zeros_like(tp))
+    recall = torch.where(tp + fn > 0, tp / (tp + fn), torch.zeros_like(tp))
+    f1 = torch.where(
+        precision + recall > 0,
+        2 * (precision * recall) / (precision + recall),
+        torch.zeros_like(tp),
+    )
 
     # Compile results
     results = {
@@ -355,7 +385,7 @@ def evaluation():
 
         # Evaluate with optimal threshold
         final_results = evaluate_medaf_final(
-            model, val_loader, device, class_names, threshold=THRESHOLD
+            model, test_loader, device, class_names, threshold=THRESHOLD
         )
 
         # Print results
@@ -396,28 +426,44 @@ def main():
     data_source = config.get("data_source", "chestxray").lower()
 
     if data_source == "chestxray":
-        csv_path = Path(config.get("known_csv", DEFAULT_KNOWN_CSV))
+        train_csv_path = Path(config.get("train_csv", DEFAULT_TRAIN_CSV))
+        test_csv_path = Path(config.get("test_csv", DEFAULT_TEST_CSV))
         image_root = Path(config.get("image_root", DEFAULT_IMAGE_ROOT))
         max_samples = config.get("max_samples")
         if isinstance(max_samples, str):
             max_samples = int(max_samples)
-        print(f"Loading ChestX-ray14 known-label split from {csv_path}")
-        dataset = ChestXrayKnownDataset(
-            csv_path=csv_path,
+
+        print(f"Loading ChestX-ray14 train dataset from {train_csv_path}")
+        train_full_dataset = ChestXrayKnownDataset(
+            csv_path=train_csv_path,
             image_root=image_root,
             img_size=config.get("img_size", 224),
             max_samples=max_samples,
         )
-        dataset_name = "ChestX-ray14 (known labels)"
-        config["num_classes"] = dataset.num_classes
-        config["img_size"] = dataset.img_size
 
+        print(f"Loading ChestX-ray14 test dataset from {test_csv_path}")
+        test_dataset = ChestXrayKnownDataset(
+            csv_path=test_csv_path,
+            image_root=image_root,
+            img_size=config.get("img_size", 224),
+            # max_samples=None,  # Use full test set
+            max_samples=config.get("max_samples", None),
+        )
+
+        dataset_name = "ChestX-ray14 (strategy1 split)"
+        config["num_classes"] = train_full_dataset.num_classes
+        config["img_size"] = train_full_dataset.img_size
+
+    # Create validation split from training data only
     val_ratio = float(config.get("val_ratio", 0.1))
-    val_size = max(1, int(len(dataset) * val_ratio))
-    train_size = len(dataset) - val_size
+    val_size = max(1, int(len(train_full_dataset) * val_ratio))
+    train_size = len(train_full_dataset) - val_size
+    print(
+        f"   Train size: {train_size} | Val size: {val_size} | Test size: {len(test_dataset)}"
+    )
 
     train_dataset, val_dataset = data.random_split(
-        dataset,
+        train_full_dataset,
         [train_size, val_size],
         generator=torch.Generator().manual_seed(42),
     )
@@ -442,10 +488,20 @@ def main():
         pin_memory=pin_memory,
     )
 
-    test_loader = val_loader
+    # Create test loader from the actual test dataset
+    global test_loader
+    test_loader = data.DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+    )
+
+    print(f"   Test dataset size: {len(test_dataset)}")
 
     print(
-        f"Dataset prepared: {train_size} train / {val_size} val samples ({dataset_name})"
+        f"Dataset prepared: {train_size} train / {val_size} val / {len(test_dataset)} test samples ({dataset_name})"
     )
 
     """Demonstrate Phase 1: Basic Multi-Label MEDAF"""
@@ -490,7 +546,9 @@ def main():
             print(f"\n==== Epoch {epoch}: Loss={metrics:.4f} ====")
 
     final_loss = phase1_metrics[-1] if phase1_metrics else float("nan")
-    checkpoint_path = save_model(model, args, phase1_metrics)
+
+    suffix = f"_epoch_{epoch}_{int(time.time())}"
+    checkpoint_path = save_model(model, args, phase1_metrics, suffix)
 
     results["phase1"] = {
         "model": model,
@@ -509,3 +567,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    evaluation()

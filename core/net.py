@@ -103,14 +103,14 @@ class ResNet(nn.Module):
         return res
 
     def _make_layer(self, block, out_channels, num_blocks, stride):
-        print(
-            "Making resnet layer with channel",
-            out_channels,
-            "block",
-            num_blocks,
-            "stride",
-            stride,
-        )
+        # print(
+        #     "Making resnet layer with channel",
+        #     out_channels,
+        #     "block",
+        #     num_blocks,
+        #     "stride",
+        #     stride,
+        # )
 
         strides = [stride] + [1] * (num_blocks - 1)
         layers = []
