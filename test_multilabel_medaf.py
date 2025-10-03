@@ -60,54 +60,6 @@ def resolve_chestxray_known_csv():
     return None
 
 
-class SyntheticMultiLabelDataset(data.Dataset):
-    """
-    Synthetic multi-label dataset for testing
-    """
-
-    def __init__(
-        self,
-        num_samples=1000,
-        img_size=32,
-        num_classes=10,
-        avg_labels_per_sample=3,
-        random_state=42,
-    ):
-        self.img_size = img_size
-        self.num_classes = num_classes
-
-        # Generate synthetic multi-label data
-        X, y = make_multilabel_classification(
-            n_samples=num_samples,
-            n_features=img_size * img_size * 3,  # Simulate RGB image
-            n_classes=num_classes,
-            n_labels=avg_labels_per_sample,
-            length=50,  # Total number of features
-            allow_unlabeled=False,
-            sparse=False,
-            return_indicator="dense",
-            random_state=random_state,
-        )
-
-        # Normalize features
-        scaler = StandardScaler()
-        X = scaler.fit_transform(X)
-
-        # Reshape to image format and convert to tensors
-        self.images = torch.FloatTensor(X.reshape(-1, 3, img_size, img_size))
-        self.labels = torch.FloatTensor(y)
-
-        print(f"Generated {num_samples} samples with {num_classes} classes")
-        print(f"Average labels per sample: {y.sum(axis=1).mean():.2f}")
-        print(f"Label distribution: {y.sum(axis=0)}")
-
-    def __len__(self):
-        return len(self.images)
-
-    def __getitem__(self, idx):
-        return self.images[idx], self.labels[idx]
-
-
 class ChestXrayKnownDataset(data.Dataset):
     """Dataset that reads ChestX-ray14 samples from the known-label CSV split."""
 
@@ -404,11 +356,7 @@ def test_training_loop():
         )
         batch_size = 8
     else:
-        print("Using synthetic dataset for training loop test")
-        dataset = SyntheticMultiLabelDataset(
-            num_samples=100, img_size=32, num_classes=8, avg_labels_per_sample=2
-        )
-        batch_size = 16
+        raise ValueError("No real data available for training loop test")
 
     train_loader = data.DataLoader(
         dataset,

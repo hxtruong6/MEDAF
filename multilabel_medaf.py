@@ -505,9 +505,6 @@ def main():
     else:
         print("Phase 1 completed with zero epochs (no training performed)")
     print(f"\n==== Phase 1 checkpoint saved to: {checkpoint_path} ====")
-    print(
-        "Use load_phase1_checkpoint(CheckpointPath) to reload this model for evaluation."
-    )
 
 
 if __name__ == "__main__":
