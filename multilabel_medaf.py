@@ -42,6 +42,30 @@ if torch.cuda.is_available():
 print("✅ Memory optimizations applied")
 
 
+def setup_resume_training(checkpoint_path, additional_epochs=30):
+    """
+    Convenient function to set up resuming training from a checkpoint.
+
+    Args:
+        checkpoint_path (str): Path to the checkpoint file to resume from
+        additional_epochs (int): Number of additional epochs to train
+
+    Example:
+        # To resume training from your latest checkpoint:
+        setup_resume_training(
+            "/home/s2320437/WORK/aidan-medaf/checkpoints/medaf_phase1/medaf_phase1_chestxray_epoch_19_1759539211.pt",
+            additional_epochs=30
+        )
+    """
+    global config
+    config["resume_from_checkpoint"] = checkpoint_path
+    config["additional_epochs"] = additional_epochs
+    print(f"🔄 Resume training configured:")
+    print(f"   Checkpoint: {checkpoint_path}")
+    print(f"   Additional epochs: {additional_epochs}")
+    print(f"   Run the script to start training!")
+
+
 import os
 
 CURRENT_DIR = "/home/s2320437/WORK/aidan-medaf/"
@@ -69,6 +93,10 @@ DEFAULT_TEST_CSV = Path(
 )
 
 DEFAULT_CHECKPOINT_DIR = Path(f"{CURRENT_DIR}/checkpoints/medaf_phase1")
+
+EVALUATION_CHECKPOINT = Path(
+    f"{CURRENT_DIR}/checkpoints/medaf_phase1/medaf_phase1_chestxray_epoch_29_1759624078.pt"
+)
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -99,10 +127,27 @@ config = {
     "phase1_checkpoint": "medaf_phase1_chestxray.pt",
     "checkpoint_dir": str(DEFAULT_CHECKPOINT_DIR),
     "run_phase2": False,
+    # Resume training configuration
+    # "resume_from_checkpoint": None,  # Path to checkpoint to resume from
+    "resume_from_checkpoint": "checkpoints/medaf_phase1/medaf_phase1_chestxray_epoch_19_1759539211.pt",
+    "additional_epochs": 30,  # Additional epochs to train when resuming
 }
 
 
-def save_model(model, args, loss_history, suffix):
+# Configuration for Phase 1
+args = {
+    "img_size": config.get("img_size", 224),
+    "backbone": "resnet18",
+    "num_classes": config.get("num_classes", 8),
+    "gate_temp": 100,
+    "loss_keys": ["b1", "b2", "b3", "gate", "divAttn", "total"],
+    "acc_keys": ["acc1", "acc2", "acc3", "accGate"],
+    # [expert_weight, gate_weight, diversity_weight] = 0.7 * (b1, b2, b3) + 1.0 * (gate) + 0.01 * (divAttn)
+    "loss_wgts": [0.7, 1.0, 0.01],
+}
+
+def save_model(model, args, loss_history, suffix, optimizer=None, epoch=None):
+    """Enhanced save function that includes optimizer state and epoch for resuming training"""
     ckpt_dir = Path(config["checkpoint_dir"])
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
@@ -119,7 +164,14 @@ def save_model(model, args, loss_history, suffix):
         "args": args,
         "class_names": class_names,
         "dataset": dataset_name,
+        "loss_history": [float(loss) for loss in loss_history],
+        "epoch": epoch,
     }
+
+    # Add optimizer state if provided (for resuming training)
+    if optimizer is not None:
+        payload["optimizer_state_dict"] = optimizer.state_dict()
+
     torch.save(payload, checkpoint_path)
 
     metadata = {
@@ -131,6 +183,8 @@ def save_model(model, args, loss_history, suffix):
         "loss_history": [float(loss) for loss in loss_history],
         "device": str(device),
         "checkpoint": str(checkpoint_path),
+        "epoch": epoch,
+        "has_optimizer_state": optimizer is not None,
         "config": {
             k: v for k, v in config.items() if isinstance(v, (int, float, str, bool))
         },
@@ -140,6 +194,45 @@ def save_model(model, args, loss_history, suffix):
         json.dump(metadata, fp, indent=2)
 
     return checkpoint_path
+
+
+def load_checkpoint_for_resume(checkpoint_path, model, optimizer=None):
+    """Load checkpoint and return model, optimizer, start_epoch, and loss_history for resuming training"""
+    print(f"📁 Loading checkpoint for resume: {checkpoint_path}")
+
+    if not Path(checkpoint_path).exists():
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+
+    # Load model state
+    model.load_state_dict(checkpoint["state_dict"])
+    print(f"✅ Model state loaded successfully")
+
+    # Load optimizer state if available and optimizer provided
+    start_epoch = 0
+    if optimizer is not None and "optimizer_state_dict" in checkpoint:
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        print(f"✅ Optimizer state loaded successfully")
+    elif optimizer is not None:
+        print(f"⚠️  No optimizer state in checkpoint - starting with fresh optimizer")
+
+    # Get starting epoch
+    if "epoch" in checkpoint and checkpoint["epoch"] is not None:
+        start_epoch = checkpoint["epoch"] + 1  # Start from next epoch
+        print(f"📊 Resuming from epoch {start_epoch}")
+    else:
+        print(f"⚠️  No epoch info in checkpoint - starting from epoch 0")
+
+    # Get loss history
+    loss_history = checkpoint.get("loss_history", [])
+    print(f"📈 Loaded {len(loss_history)} previous loss values")
+
+    # Verify model args match
+    checkpoint_args = checkpoint.get("args", {})
+    print(f"🔧 Checkpoint args: {checkpoint_args}")
+
+    return model, optimizer, start_epoch, loss_history, checkpoint_args
 
 
 def print_evaluation_results(results):
@@ -358,11 +451,11 @@ def evaluation():
     # ===== RUN FINAL EVALUATION =====
 
     print("\n" + "=" * 60)
-    print("🔍 FINAL EVALUATION - CLEAN VERSION")
+    print("🔍 FINAL EVALUATION -")
     print("=" * 60)
 
     # Load and evaluate the trained model
-    checkpoint_path = results["phase1"]["checkpoint"]
+    checkpoint_path = EVALUATION_CHECKPOINT
     print(f"📁 Loading checkpoint: {checkpoint_path}")
 
     THRESHOLD = 0.5
@@ -371,6 +464,17 @@ def evaluation():
         # Load checkpoint
         checkpoint = torch.load(checkpoint_path, map_location=device)
         args = checkpoint.get("args", {})
+
+        args = {
+            "img_size": config.get("img_size", 224),
+            "backbone": "resnet18",
+            "num_classes": config.get("num_classes", 8),
+            "gate_temp": 100,
+            "loss_keys": ["b1", "b2", "b3", "gate", "divAttn", "total"],
+            "acc_keys": ["acc1", "acc2", "acc3", "accGate"],
+            # [expert_weight, gate_weight, diversity_weight] = 0.7 * (b1, b2, b3) + 1.0 * (gate) + 0.01 * (divAttn)
+            "loss_wgts": [0.7, 1.0, 0.01],
+        }
 
         if not args:
             raise ValueError("Checkpoint missing 'args'")
@@ -382,6 +486,27 @@ def evaluation():
 
         print(f"✅ Model loaded successfully")
         print(f"   Parameters: {sum(p.numel() for p in model.parameters()):,}")
+
+        # Create test loader from the actual test dataset
+        global test_loader
+        print(f"Loading ChestX-ray14 test dataset from {config.get('test_csv')}")
+        test_dataset = ChestXrayKnownDataset(
+            csv_path=config.get("test_csv"),
+            image_root=config.get("image_root"),
+            img_size=config.get("img_size", 224),
+            # max_samples=None,  # Use full test set
+            max_samples=config.get("max_samples", None),
+        )
+
+        test_loader = data.DataLoader(
+            test_dataset,
+            batch_size=config.get("batch_size", 16),
+            shuffle=False,
+            num_workers=config.get("num_workers", 1),
+            pin_memory=torch.cuda.is_available(),
+        )
+
+        print(f"   Test dataset size: {len(test_dataset)}")
 
         # Evaluate with optimal threshold
         final_results = evaluate_medaf_final(
@@ -441,15 +566,6 @@ def main():
             max_samples=max_samples,
         )
 
-        print(f"Loading ChestX-ray14 test dataset from {test_csv_path}")
-        test_dataset = ChestXrayKnownDataset(
-            csv_path=test_csv_path,
-            image_root=image_root,
-            img_size=config.get("img_size", 224),
-            # max_samples=None,  # Use full test set
-            max_samples=config.get("max_samples", None),
-        )
-
         dataset_name = "ChestX-ray14 (strategy1 split)"
         config["num_classes"] = train_full_dataset.num_classes
         config["img_size"] = train_full_dataset.img_size
@@ -458,9 +574,7 @@ def main():
     val_ratio = float(config.get("val_ratio", 0.1))
     val_size = max(1, int(len(train_full_dataset) * val_ratio))
     train_size = len(train_full_dataset) - val_size
-    print(
-        f"   Train size: {train_size} | Val size: {val_size} | Test size: {len(test_dataset)}"
-    )
+    print(f"   Train size: {train_size} | Val size: {val_size}")
 
     train_dataset, val_dataset = data.random_split(
         train_full_dataset,
@@ -488,20 +602,8 @@ def main():
         pin_memory=pin_memory,
     )
 
-    # Create test loader from the actual test dataset
-    global test_loader
-    test_loader = data.DataLoader(
-        test_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-    )
-
-    print(f"   Test dataset size: {len(test_dataset)}")
-
     print(
-        f"Dataset prepared: {train_size} train / {val_size} val / {len(test_dataset)} test samples ({dataset_name})"
+        f"Dataset prepared: {train_size} train / {val_size} val samples ({dataset_name})"
     )
 
     """Demonstrate Phase 1: Basic Multi-Label MEDAF"""
@@ -509,18 +611,6 @@ def main():
     print("\n" + "=" * 60)
     print("PHASE 1: Basic Multi-Label MEDAF")
     print("=" * 60)
-
-    # Configuration for Phase 1
-    args = {
-        "img_size": config["img_size"],
-        "backbone": "resnet18",
-        "num_classes": config["num_classes"],
-        "gate_temp": 100,
-        "loss_keys": ["b1", "b2", "b3", "gate", "divAttn", "total"],
-        "acc_keys": ["acc1", "acc2", "acc3", "accGate"],
-        # [expert_weight, gate_weight, diversity_weight] = 0.7 * (b1, b2, b3) + 1.0 * (gate) + 0.01 * (divAttn)
-        "loss_wgts": [0.7, 1.0, 0.01],
-    }
 
     # Create Phase 1 model
     model = MultiLabelMEDAF(args)
@@ -534,9 +624,48 @@ def main():
     criterion = {"bce": nn.BCEWithLogitsLoss()}
     optimizer = torch.optim.Adam(model.parameters(), lr=config["learning_rate"])
 
-    # Training
+    # Check if we should resume from checkpoint
+    start_epoch = 0
     phase1_metrics = []
-    for epoch in range(config["num_epochs"]):
+
+    if config.get("resume_from_checkpoint"):
+        try:
+            print(f"\n🔄 RESUMING TRAINING FROM CHECKPOINT")
+            print("=" * 50)
+
+            model, optimizer, start_epoch, phase1_metrics, checkpoint_args = (
+                load_checkpoint_for_resume(
+                    config["resume_from_checkpoint"], model, optimizer
+                )
+            )
+
+            # Verify args compatibility
+            for key in ["num_classes", "img_size", "backbone"]:
+                if key in checkpoint_args and checkpoint_args[key] != args.get(key):
+                    print(
+                        f"⚠️  Warning: {key} mismatch - checkpoint: {checkpoint_args[key]}, current: {args.get(key)}"
+                    )
+
+            # Update total epochs to train additional epochs
+            total_epochs = start_epoch + config.get("additional_epochs", 20)
+            print(
+                f"📊 Training plan: Resume from epoch {start_epoch} → train until epoch {total_epochs-1}"
+            )
+            print(f"📈 Previous training loss history: {len(phase1_metrics)} epochs")
+
+        except Exception as e:
+            print(f"❌ Failed to load checkpoint: {e}")
+            print(f"🔄 Starting fresh training instead...")
+            start_epoch = 0
+            phase1_metrics = []
+            total_epochs = config["num_epochs"]
+    else:
+        total_epochs = config["num_epochs"]
+        print(f"🆕 Starting fresh training for {total_epochs} epochs")
+
+    # Training loop
+    print(f"\n🚀 Starting training from epoch {start_epoch} to {total_epochs-1}")
+    for epoch in range(start_epoch, total_epochs):
         metrics = train_multilabel(
             train_loader, model, criterion, optimizer, args, device
         )
@@ -547,8 +676,10 @@ def main():
 
     final_loss = phase1_metrics[-1] if phase1_metrics else float("nan")
 
-    suffix = f"_epoch_{epoch}_{int(time.time())}"
-    checkpoint_path = save_model(model, args, phase1_metrics, suffix)
+    suffix = f"_epoch_{total_epochs-1}_{int(time.time())}"
+    checkpoint_path = save_model(
+        model, args, phase1_metrics, suffix, optimizer, total_epochs - 1
+    )
 
     results["phase1"] = {
         "model": model,
@@ -560,11 +691,26 @@ def main():
     print("\n\n")
     if phase1_metrics:
         print(f"\n==== Phase 1 Final Loss: {final_loss:.4f} ====")
+        print(f"==== Total epochs trained: {len(phase1_metrics)} ====")
+        if config.get("resume_from_checkpoint"):
+            print(
+                f"==== Resumed from epoch {start_epoch}, trained {total_epochs - start_epoch} additional epochs ===="
+            )
     else:
         print("Phase 1 completed with zero epochs (no training performed)")
     print(f"\n==== Phase 1 checkpoint saved to: {checkpoint_path} ====")
 
 
 if __name__ == "__main__":
-    main()
+    # === Training Mode ===
+    # Check if user wants to resume training
+    # if config.get("resume_from_checkpoint"):
+    #     print("🔄 RESUMING TRAINING MODE")
+    #     main()
+    # else:
+    #     print("🆕 FRESH TRAINING MODE")
+    #     print("💡 To resume from checkpoint, see resume_training_example()")
+    #     main()
+
+    # === Evaluation Mode ===
     evaluation()
