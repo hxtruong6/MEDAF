@@ -9,3 +9,7 @@ alwaysApply: true
 - If you are not sure about the code, ask me to for clarification before making any changes.
 - Comment the code to make it more readable. Do not create unnecessary comments.
 - Propose best practices if you have better ideas or suggestions.
+- Do not create new files if it is not necessary.
+- Try to understand the code and the context before making any changes.
+- Try to adapt the code to the existing code.
+- Suggest best practices and refactor the code if it is not efficient.

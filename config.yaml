@@ -1,0 +1,110 @@
+# MEDAF Multi-Label Classification Configuration
+
+# Dataset Configuration
+data:
+  source: "chestxray"
+  train_csv: "/home/s2320437/WORK/aidan-medaf/datasets/data/chestxray/NIH/chestxray_strategy1_train.csv"
+  test_csv: "/home/s2320437/WORK/aidan-medaf/datasets/data/chestxray/NIH/chestxray_strategy1_test.csv"
+  image_root: "/home/s2320437/WORK/aidan-medaf/datasets/data/chestxray/NIH/images-224"
+  img_size: 224
+  max_samples: 500 # Set to integer for quick experiments, null for full dataset
+
+# Training Configuration
+training:
+  batch_size: 32
+  num_epochs: 50
+  learning_rate: 5e-5
+  weight_decay: 1e-4 # For AdamW optimizer
+  val_ratio: 0.1
+  num_workers: 1
+
+  # Optimizer Configuration
+  optimizer:
+    type: "adamw" # adamw, adam, sgd
+    betas: [0.9, 0.999]
+    eps: 1e-8
+    amsgrad: false
+
+  # Loss Configuration
+  loss:
+    type: "focal" # focal, bce, weighted_bce
+    focal_alpha: 1.0
+    focal_gamma: 2.0
+    class_weighting:
+      enabled: true
+      method: "inverse_freq" # inverse_freq, effective_num, focal
+
+  # Enhanced Training Features
+  enhanced_training: true
+  use_optimal_thresholds: true
+
+# Model Configuration
+model:
+  backbone: "resnet18"
+  num_classes: 8
+  gate_temp: 100
+
+  # Loss weights: [expert_weight, gate_weight, diversity_weight]
+  loss_weights: [0.7, 1.0, 0.01]
+
+  # Keys for tracking
+  loss_keys: ["b1", "b2", "b3", "gate", "divAttn", "total"]
+  acc_keys: ["acc1", "acc2", "acc3", "accGate"]
+
+# Checkpoint Configuration
+checkpoints:
+  dir: "/home/s2320437/WORK/aidan-medaf/checkpoints/medaf_phase1"
+  filename: "medaf_phase1_chestxray_enhanced.pt"
+  save_every: 5 # Save checkpoint every N epochs
+  keep_best: true
+
+  # Resume Training
+  resume_from: null # Path to checkpoint file
+
+  # Evaluation
+  evaluation_checkpoint: "/home/s2320437/WORK/aidan-medaf/checkpoints/medaf_phase1/medaf_phase1_chestxray_epoch_29_1759624078.pt"
+
+# Logging Configuration
+logging:
+  level: "INFO" # DEBUG, INFO, WARNING, ERROR
+  save_metrics: true
+  metrics_dir: "/home/s2320437/WORK/aidan-medaf/logs"
+
+  # Training metrics to log
+  metrics:
+    - "epoch"
+    - "train_loss"
+    - "val_loss"
+    - "train_acc"
+    - "val_acc"
+    - "learning_rate"
+    - "epoch_time"
+
+  # Visualization
+  create_plots: true
+  plot_types: ["loss", "accuracy", "learning_rate"]
+
+# Hardware Configuration
+hardware:
+  device: "auto" # auto, cuda, cpu
+  mixed_precision: false
+  memory_fraction: 0.9
+  pin_memory: true
+
+# Class Names (for ChestX-ray14)
+class_names:
+  - "Atelectasis"
+  - "Cardiomegaly"
+  - "Effusion"
+  - "Infiltration"
+  - "Mass"
+  - "Nodule"
+  - "Pneumonia"
+  - "Pneumothorax"
+
+# Paths
+paths:
+  current_dir: "/home/s2320437/WORK/aidan-medaf"
+
+# Reproducibility
+seed: 42
