@@ -17,6 +17,13 @@ from sklearn.preprocessing import StandardScaler
 
 from core.multilabel_net import MultiLabelMEDAF
 from core.multilabel_train import train_multilabel
+from core.multilabel_train_enhanced import (
+    calculate_class_weights,
+    optimize_thresholds_per_class,
+    evaluate_with_optimal_thresholds,
+    train_multilabel_enhanced,
+    print_enhanced_results,
+)
 
 
 # ===== MEMORY OPTIMIZATION =====
@@ -42,27 +49,24 @@ if torch.cuda.is_available():
 print("✅ Memory optimizations applied")
 
 
-def setup_resume_training(checkpoint_path, additional_epochs=30):
+def setup_resume_training(checkpoint_path):
     """
     Convenient function to set up resuming training from a checkpoint.
 
     Args:
         checkpoint_path (str): Path to the checkpoint file to resume from
-        additional_epochs (int): Number of additional epochs to train
 
     Example:
         # To resume training from your latest checkpoint:
         setup_resume_training(
-            "/home/s2320437/WORK/aidan-medaf/checkpoints/medaf_phase1/medaf_phase1_chestxray_epoch_19_1759539211.pt",
-            additional_epochs=30
+            "/home/s2320437/WORK/aidan-medaf/checkpoints/medaf_phase1/medaf_phase1_chestxray_epoch_19_1759539211.pt"
         )
     """
     global config
     config["resume_from_checkpoint"] = checkpoint_path
-    config["additional_epochs"] = additional_epochs
     print(f"🔄 Resume training configured:")
     print(f"   Checkpoint: {checkpoint_path}")
-    print(f"   Additional epochs: {additional_epochs}")
+    print(f"   Total epochs to train: {config['num_epochs']}")
     print(f"   Run the script to start training!")
 
 
@@ -118,19 +122,23 @@ config = {
     "test_csv": str(DEFAULT_TEST_CSV),
     "image_root": str(DEFAULT_IMAGE_ROOT),
     "batch_size": 32,
-    "num_epochs": 20,
-    "learning_rate": 1e-4,
+    "num_epochs": 50,  # Increased for better convergence
+    "learning_rate": 5e-5,  # Lower LR for medical data stability
     "val_ratio": 0.1,
     "num_workers": 1,
     "max_samples": None,  # Set to an int for quicker experiments
     # "max_samples": 100,
-    "phase1_checkpoint": "medaf_phase1_chestxray.pt",
+    "phase1_checkpoint": "medaf_phase1_chestxray_enhanced.pt",
     "checkpoint_dir": str(DEFAULT_CHECKPOINT_DIR),
     "run_phase2": False,
+    # Enhanced training configuration
+    "use_class_weights": True,  # Enable class weighting for imbalanced data
+    "class_weight_method": "inverse_freq",  # 'inverse_freq', 'effective_num', or 'focal'
+    "use_optimal_thresholds": True,  # Enable per-class threshold optimization
+    "enhanced_training": True,  # Use enhanced training loop
     # Resume training configuration
-    # "resume_from_checkpoint": None,  # Path to checkpoint to resume from
-    "resume_from_checkpoint": "checkpoints/medaf_phase1/medaf_phase1_chestxray_epoch_19_1759539211.pt",
-    "additional_epochs": 30,  # Additional epochs to train when resuming
+    "resume_from_checkpoint": None,  # Path to checkpoint to resume from
+    # "resume_from_checkpoint": "checkpoints/medaf_phase1/medaf_phase1_chestxray_epoch_19_1759539211.pt",
 }
 
 
@@ -447,15 +455,15 @@ def print_final_results(results):
         print("   ✅ Model shows good performance")
 
 
-def evaluation():
+def evaluation(checkpoint_path=EVALUATION_CHECKPOINT):
     # ===== RUN FINAL EVALUATION =====
 
     print("\n" + "=" * 60)
     print("🔍 FINAL EVALUATION -")
     print("=" * 60)
+    print(f"   Checkpoint: {checkpoint_path}")
 
     # Load and evaluate the trained model
-    checkpoint_path = EVALUATION_CHECKPOINT
     print(f"📁 Loading checkpoint: {checkpoint_path}")
 
     THRESHOLD = 0.5
@@ -508,16 +516,69 @@ def evaluation():
 
         print(f"   Test dataset size: {len(test_dataset)}")
 
-        # Evaluate with optimal threshold
-        final_results = evaluate_medaf_final(
-            model, test_loader, device, class_names, threshold=THRESHOLD
-        )
+        # Enhanced evaluation with optimal thresholds
+        if config.get("use_optimal_thresholds", False):
+            print(f"\n🎯 EVALUATION WITH OPTIMAL THRESHOLDS")
+            print("=" * 60)
 
-        # Print results
-        print_final_results(final_results)
+            # First, optimize thresholds using validation split from test data
+            # Create a small validation split for threshold optimization
+            test_size = len(test_dataset)
+            val_size = min(
+                1000, test_size // 5
+            )  # Use 20% or max 1000 samples for threshold optimization
+            eval_size = test_size - val_size
+
+            val_dataset_for_thresh, eval_dataset = data.random_split(
+                test_dataset,
+                [val_size, eval_size],
+                generator=torch.Generator().manual_seed(42),
+            )
+
+            val_loader_for_thresh = data.DataLoader(
+                val_dataset_for_thresh,
+                batch_size=config.get("batch_size", 16),
+                shuffle=False,
+                num_workers=config.get("num_workers", 1),
+                pin_memory=torch.cuda.is_available(),
+            )
+
+            eval_loader = data.DataLoader(
+                eval_dataset,
+                batch_size=config.get("batch_size", 16),
+                shuffle=False,
+                num_workers=config.get("num_workers", 1),
+                pin_memory=torch.cuda.is_available(),
+            )
+
+            # Optimize thresholds
+            optimal_thresholds, threshold_metrics = optimize_thresholds_per_class(
+                model, val_loader_for_thresh, device, len(class_names), class_names
+            )
+
+            # Evaluate with optimal thresholds
+            final_results = evaluate_with_optimal_thresholds(
+                model, eval_loader, device, optimal_thresholds, class_names
+            )
+
+            # Print enhanced results
+            print_enhanced_results(final_results)
+
+        else:
+            # Standard evaluation with fixed threshold
+            final_results = evaluate_medaf_final(
+                model, test_loader, device, class_names, threshold=THRESHOLD
+            )
+
+            # Print results
+            print_final_results(final_results)
 
         # Save results
-        eval_save_path = Path(checkpoint_path).parent / "final_evaluation_results.json"
+        current_time = int(time.time())
+        eval_save_path = (
+            Path(checkpoint_path).parent
+            / f"final_evaluation_results_{THRESHOLD}_{current_time}.json"
+        )
         with open(eval_save_path, "w") as f:
             json_results = {}
             for key, value in final_results.items():
@@ -620,9 +681,30 @@ def main():
         f"Phase 1 Model Parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}"
     )
 
-    # Training setup
-    criterion = {"bce": nn.BCEWithLogitsLoss()}
+    # Enhanced Training setup with class weights
+    print(f"\n🔧 Setting up enhanced training...")
+    print(f"   Class weighting: {config.get('use_class_weights', False)}")
+    print(f"   Enhanced training: {config.get('enhanced_training', False)}")
+
+    # Calculate class weights if enabled
+    if config.get("use_class_weights", False):
+        print(
+            f"   Calculating class weights using method: {config.get('class_weight_method', 'inverse_freq')}"
+        )
+        pos_weights = calculate_class_weights(
+            train_loader,
+            config["num_classes"],
+            device,
+            method=config.get("class_weight_method", "inverse_freq"),
+        )
+        criterion = {"bce": nn.BCEWithLogitsLoss(pos_weight=pos_weights)}
+        print(f"   ✅ Class-weighted BCE loss initialized")
+    else:
+        criterion = {"bce": nn.BCEWithLogitsLoss()}
+        print(f"   📝 Standard BCE loss (no class weighting)")
+
     optimizer = torch.optim.Adam(model.parameters(), lr=config["learning_rate"])
+    print(f"   📊 Optimizer: Adam with LR={config['learning_rate']}")
 
     # Check if we should resume from checkpoint
     start_epoch = 0
@@ -646,12 +728,21 @@ def main():
                         f"⚠️  Warning: {key} mismatch - checkpoint: {checkpoint_args[key]}, current: {args.get(key)}"
                     )
 
-            # Update total epochs to train additional epochs
-            total_epochs = start_epoch + config.get("additional_epochs", 20)
+            # Use configured num_epochs as total epochs
+            total_epochs = config["num_epochs"]
             print(
                 f"📊 Training plan: Resume from epoch {start_epoch} → train until epoch {total_epochs-1}"
             )
             print(f"📈 Previous training loss history: {len(phase1_metrics)} epochs")
+
+            # Check if we're already at or past the target epochs
+            if start_epoch >= total_epochs:
+                print(
+                    f"⚠️  Warning: Already trained {start_epoch} epochs, target is {total_epochs}"
+                )
+                print(
+                    f"   No additional training needed. Increase num_epochs if you want more training."
+                )
 
         except Exception as e:
             print(f"❌ Failed to load checkpoint: {e}")
@@ -663,10 +754,25 @@ def main():
         total_epochs = config["num_epochs"]
         print(f"🆕 Starting fresh training for {total_epochs} epochs")
 
-    # Training loop
-    print(f"\n🚀 Starting training from epoch {start_epoch} to {total_epochs-1}")
+    # Training loop with enhanced training
+    print(
+        f"\n🚀 Starting enhanced training from epoch {start_epoch} to {total_epochs-1}"
+    )
+
+    # Choose training function based on configuration
+    if config.get("enhanced_training", False):
+        train_function = train_multilabel_enhanced
+        print(f"   Using enhanced training with class weighting")
+    else:
+        train_function = train_multilabel
+        print(f"   Using standard training")
+
     for epoch in range(start_epoch, total_epochs):
-        metrics = train_multilabel(
+        print(f"\n{'='*60}")
+        print(f"EPOCH {epoch+1}/{total_epochs}")
+        print(f"{'='*60}")
+
+        metrics = train_function(
             train_loader, model, criterion, optimizer, args, device
         )
         phase1_metrics.append(metrics)
@@ -694,7 +800,7 @@ def main():
         print(f"==== Total epochs trained: {len(phase1_metrics)} ====")
         if config.get("resume_from_checkpoint"):
             print(
-                f"==== Resumed from epoch {start_epoch}, trained {total_epochs - start_epoch} additional epochs ===="
+                f"==== Resumed from epoch {start_epoch}, trained until epoch {total_epochs - 1} ===="
             )
     else:
         print("Phase 1 completed with zero epochs (no training performed)")
