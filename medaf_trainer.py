@@ -20,10 +20,13 @@ from core.config_manager import load_config
 from core.losses import LossFactory, calculate_class_weights_advanced
 from core.metrics_logger import MetricsLogger, EpochMetrics, TrainingProgressTracker
 from core.multilabel_net import MultiLabelMEDAF
-from core.multilabel_train_enhanced import (
+from core.training_utils import (
     optimize_thresholds_per_class,
     evaluate_with_optimal_thresholds,
     print_enhanced_results,
+    train_multilabel_enhanced,
+    train_multilabel_enhanced_with_metrics,
+    calculate_multilabel_attention_diversity,
 )
 from test_multilabel_medaf import ChestXrayKnownDataset
 
@@ -232,6 +235,7 @@ class MEDAFTrainer:
     def _create_loss_function(self, train_loader: data.DataLoader) -> nn.Module:
         """Create loss function with optional class weighting"""
         loss_config = self.config_manager.get_loss_config()
+        class_names = self.config.get("class_names", [])
         num_classes = self.config.get("model.num_classes", 8)
 
         # Calculate class weights if enabled
@@ -248,7 +252,11 @@ class MEDAFTrainer:
                 f"Class weights calculated using {loss_config['class_weighting_method']} method"
             )
 
-        print(f"Class weights: {pos_weight}")
+        # show class weights by normalizing to 1 with corresponding class name
+        for i, weight in enumerate(pos_weight):
+            print(
+                f"Class {i} [{class_names[i]}]: {((weight/pos_weight.sum()) * 100):.2f}%"
+            )
 
         # Create loss function
         loss_fn = LossFactory.create_loss(
@@ -271,62 +279,32 @@ class MEDAFTrainer:
         optimizer: torch.optim.Optimizer,
         epoch: int,
     ) -> Dict[str, float]:
-        """Train for one epoch"""
+        """Train for one epoch using enhanced multi-label training"""
         model.train()
 
-        total_loss = 0.0
-        total_samples = 0
-        correct_predictions = 0
-
+        # Get model arguments for enhanced training
         model_args = self.config_manager.get_model_args()
 
-        for batch_idx, (inputs, targets) in enumerate(train_loader):
-            inputs = inputs.to(self.device, non_blocking=True)
-            targets = targets.to(self.device, non_blocking=True)
+        # Create criterion dictionary expected by train_multilabel_enhanced
+        criterion_dict = {"bce": criterion}
 
-            # Forward pass
-            output_dict = model(inputs, targets)
-            logits = output_dict["logits"]
-            cams_list = output_dict["cams_list"]
+        # Use the enhanced training function with detailed metrics
+        metrics = train_multilabel_enhanced_with_metrics(
+            train_loader=train_loader,
+            model=model,
+            criterion=criterion_dict,
+            optimizer=optimizer,
+            args=model_args,
+            device=self.device,
+        )
 
-            # Calculate losses
-            expert_losses = [criterion(logit, targets.float()) for logit in logits[:3]]
-            gate_loss = criterion(logits[3], targets.float())
-
-            # Diversity loss (simplified for now)
-            diversity_loss = torch.tensor(0.0, device=self.device)
-
-            # Combine losses
-            loss_weights = model_args["loss_wgts"]
-            total_loss_batch = (
-                loss_weights[0] * sum(expert_losses)
-                + loss_weights[1] * gate_loss
-                + loss_weights[2] * diversity_loss
-            )
-
-            # Backward pass
-            optimizer.zero_grad()
-            total_loss_batch.backward()
-            optimizer.step()
-
-            # Accumulate metrics
-            total_loss += total_loss_batch.item()
-            total_samples += inputs.size(0)
-
-            # Calculate accuracy (using gate predictions)
-            with torch.no_grad():
-                predictions = torch.sigmoid(logits[3]) > 0.5
-                correct_predictions += (predictions == targets).all(dim=1).sum().item()
-
-        avg_loss = total_loss / len(train_loader)
-        accuracy = correct_predictions / total_samples
-
+        # Return metrics in the expected format
         return {
-            "loss": avg_loss,
-            "accuracy": accuracy,
-            "expert_loss": sum(expert_losses).item() / len(expert_losses),
-            "gate_loss": gate_loss.item(),
-            "diversity_loss": diversity_loss.item(),
+            "loss": metrics["total_loss"],
+            "accuracy": metrics["accuracy"],
+            "expert_loss": metrics["expert_loss"],
+            "gate_loss": metrics["gate_loss"],
+            "diversity_loss": metrics["diversity_loss"],
         }
 
     def _validate_epoch(
@@ -481,11 +459,23 @@ class MEDAFTrainer:
         self.logger.info(f"Loading checkpoint for evaluation: {checkpoint_path}")
 
         # Load checkpoint
-        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        checkpoint = torch.load(
+            checkpoint_path, map_location=self.device, weights_only=False
+        )
 
         # Create model and load state
         model = self._create_model()
-        model.load_state_dict(checkpoint["model_state_dict"])
+
+        # Handle different checkpoint formats (backward compatibility)
+        if "model_state_dict" in checkpoint:
+            model.load_state_dict(checkpoint["model_state_dict"])
+        elif "state_dict" in checkpoint:
+            model.load_state_dict(checkpoint["state_dict"])
+        else:
+            raise KeyError(
+                f"Checkpoint does not contain model state. Available keys: {list(checkpoint.keys())}"
+            )
+
         model.eval()
 
         # Create test loader

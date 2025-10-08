@@ -96,12 +96,18 @@ class MetricsLogger:
             ]
             writer.writerow(values)
 
-        # Log to console (minimal)
+        val_loss_str = (
+            f"{metrics.val_loss:.4f}" if metrics.val_loss is not None else "N/A"
+        )
+        train_acc_str = (
+            f"{metrics.train_acc:.3f}" if metrics.train_acc is not None else "N/A"
+        )
+
         self.logger.info(
             f"Epoch {metrics.epoch:3d} | "
             f"Train Loss: {metrics.train_loss:.4f} | "
-            f"Val Loss: {metrics.val_loss:.4f if metrics.val_loss else 'N/A'} | "
-            f"Train Acc: {metrics.train_acc:.3f if metrics.train_acc else 'N/A'} | "
+            f"Val Loss: {val_loss_str} | "
+            f"Train Acc: {train_acc_str} | "
             f"Time: {metrics.epoch_time:.1f}s"
         )
 

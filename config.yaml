@@ -7,7 +7,7 @@ data:
   test_csv: "/home/s2320437/WORK/aidan-medaf/datasets/data/chestxray/NIH/chestxray_strategy1_test.csv"
   image_root: "/home/s2320437/WORK/aidan-medaf/datasets/data/chestxray/NIH/images-224"
   img_size: 224
-  max_samples: 500 # Set to integer for quick experiments, null for full dataset
+  max_samples: null # Set to integer for quick experiments, null for full dataset
 
 # Training Configuration
 training:
@@ -55,7 +55,7 @@ model:
 checkpoints:
   dir: "/home/s2320437/WORK/aidan-medaf/checkpoints/medaf_phase1"
   filename: "medaf_phase1_chestxray_enhanced.pt"
-  save_every: 5 # Save checkpoint every N epochs
+  save_every: 10 # Save checkpoint every N epochs
   keep_best: true
 
   # Resume Training

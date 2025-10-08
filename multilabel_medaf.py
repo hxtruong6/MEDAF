@@ -17,7 +17,7 @@ from sklearn.preprocessing import StandardScaler
 
 from core.multilabel_net import MultiLabelMEDAF
 from core.multilabel_train import train_multilabel
-from core.multilabel_train_enhanced import (
+from core.training_utils import (
     calculate_class_weights,
     optimize_thresholds_per_class,
     evaluate_with_optimal_thresholds,
