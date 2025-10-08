@@ -253,10 +253,11 @@ class MEDAFTrainer:
             )
 
         # show class weights by normalizing to 1 with corresponding class name
-        for i, weight in enumerate(pos_weight):
-            print(
-                f"Class {i} [{class_names[i]}]: {((weight/pos_weight.sum()) * 100):.2f}%"
-            )
+        if pos_weight is not None:
+            for i, weight in enumerate(pos_weight):
+                print(
+                    f"Class {i} [{class_names[i]}]: {((weight/pos_weight.sum()) * 100):.2f}%"
+                )
 
         # Create loss function
         loss_fn = LossFactory.create_loss(

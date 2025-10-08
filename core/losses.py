@@ -197,7 +197,7 @@ class LossFactory:
             return WeightedBCELoss(pos_weight=pos_weight).to(device)
 
         elif loss_type == "bce":
-            return nn.BCEWithLogitsLoss().to(device)
+            return nn.BCEWithLogitsLoss(pos_weight=pos_weight).to(device)
 
         else:
             raise ValueError(f"Unknown loss type: {loss_type}")

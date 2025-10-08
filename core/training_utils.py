@@ -746,6 +746,19 @@ def train_multilabel_enhanced_with_metrics(
         # Multi-label attention diversity loss
         diversity_loss = calculate_multilabel_attention_diversity(cams_list, targets)
 
+        # Debug: Print actual loss values for first few batches
+        if i < 3:
+            print(f"DEBUG Batch {i}:")
+            print(f"  Expert losses: {[loss.item() for loss in bce_losses]}")
+            print(f"  Gate loss: {gate_loss.item()}")
+            print(f"  Diversity loss: {diversity_loss.item()}")
+            print(f"  Logits shapes: {[logit.shape for logit in logits]}")
+            print(f"  Targets shape: {targets.shape}")
+            print(f"  Targets sample: {targets[0] if targets.numel() > 0 else 'empty'}")
+            print(
+                f"  Logits sample (gate): {logits[3][0] if logits[3].numel() > 0 else 'empty'}"
+            )
+
         # Combine losses according to weights
         loss_values = bce_losses + [gate_loss, diversity_loss]
         total_loss = (
@@ -754,6 +767,12 @@ def train_multilabel_enhanced_with_metrics(
             + args["loss_wgts"][2] * diversity_loss  # Diversity loss weight
         )
         loss_values.append(total_loss)
+
+        # Debug: Print weighted loss values for first few batches
+        if i < 3:
+            print(f"  Weighted total loss: {total_loss.item()}")
+            print(f"  Loss weights: {args['loss_wgts']}")
+            print(f"  Sum of expert losses: {sum(bce_losses).item()}")
 
         # Compute multi-label accuracies (still using 0.5 threshold for training monitoring)
         acc_values = []

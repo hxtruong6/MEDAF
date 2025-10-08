@@ -13,7 +13,7 @@ data:
 training:
   batch_size: 32
   num_epochs: 50
-  learning_rate: 5e-5
+  learning_rate: 1e-4
   weight_decay: 1e-4 # For AdamW optimizer
   val_ratio: 0.1
   num_workers: 1
@@ -27,7 +27,7 @@ training:
 
   # Loss Configuration
   loss:
-    type: "focal" # focal, bce, weighted_bce
+    type: "bce" # focal, bce, weighted_bce
     focal_alpha: 1.0
     focal_gamma: 2.0
     class_weighting:
