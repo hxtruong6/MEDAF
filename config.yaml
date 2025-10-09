@@ -37,6 +37,7 @@ training:
   # Enhanced Training Features
   enhanced_training: true
   use_optimal_thresholds: true
+  use_stratified_split: true # Use stratified split to prevent dataset imbalance
 
 # Model Configuration
 model:

@@ -7,13 +7,14 @@ import gc
 import time
 import logging
 from pathlib import Path
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional, List
 
 import torch
 import torch.nn as nn
 import torch.utils.data as data
 import numpy as np
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MultiLabelBinarizer
 
 # Local imports
 from core.config_manager import load_config
@@ -113,6 +114,86 @@ class MEDAFTrainer:
 
         self.logger.info(f"Random seed set to: {seed}")
 
+    def _extract_labels_for_stratification(self, dataset) -> np.ndarray:
+        """
+        Extract labels from dataset for stratification purposes.
+        For multi-label data, we create a stratification strategy based on label combinations.
+        """
+        self.logger.info("Extracting labels for stratification...")
+        labels_list = []
+
+        # Extract labels from all samples
+        for i in range(len(dataset)):
+            _, labels = dataset[i]
+            # Convert to binary array and then to string for stratification
+            label_str = "".join(map(str, labels.int().tolist()))
+            labels_list.append(label_str)
+
+        # Log label distribution for debugging
+        unique_labels, counts = np.unique(labels_list, return_counts=True)
+        self.logger.info(f"Found {len(unique_labels)} unique label combinations")
+        self.logger.info(
+            f"Most common combinations: {dict(zip(unique_labels[:5], counts[:5]))}"
+        )
+
+        return np.array(labels_list)
+
+    def _create_stratified_split(
+        self, dataset, val_ratio: float, random_state: int = 42
+    ) -> Tuple[data.Subset, data.Subset]:
+        """
+        Create stratified train-validation split for multi-label data.
+
+        Args:
+            dataset: The full dataset
+            val_ratio: Ratio of validation data
+            random_state: Random seed for reproducibility
+
+        Returns:
+            Tuple of (train_subset, val_subset)
+        """
+        self.logger.info("Creating stratified train-validation split...")
+
+        try:
+            # Extract labels for stratification
+            labels_for_stratify = self._extract_labels_for_stratification(dataset)
+
+            # Get indices
+            indices = np.arange(len(dataset))
+
+            # Use train_test_split with stratification
+            train_indices, val_indices = train_test_split(
+                indices,
+                test_size=val_ratio,
+                random_state=random_state,
+                stratify=labels_for_stratify,
+            )
+
+            self.logger.info("✅ Stratified split successful")
+
+        except ValueError as e:
+            # If stratification fails (e.g., some classes have too few samples),
+            # fall back to random split with a warning
+            self.logger.warning(f"Stratified split failed: {e}")
+            self.logger.warning("Falling back to random split...")
+
+            val_size = max(1, int(len(dataset) * val_ratio))
+            train_size = len(dataset) - val_size
+
+            train_indices, val_indices = train_test_split(
+                indices, test_size=val_ratio, random_state=random_state
+            )
+
+        # Create subsets
+        train_subset = data.Subset(dataset, train_indices)
+        val_subset = data.Subset(dataset, val_indices)
+
+        self.logger.info(
+            f"Split created: Train={len(train_subset)}, Val={len(val_subset)}"
+        )
+
+        return train_subset, val_subset
+
     def _create_data_loaders(
         self,
     ) -> Tuple[data.DataLoader, data.DataLoader, data.DataLoader]:
@@ -129,14 +210,25 @@ class MEDAFTrainer:
 
         # Create validation split
         val_ratio = self.config.get("training.val_ratio", 0.1)
-        val_size = max(1, int(len(train_dataset) * val_ratio))
-        train_size = len(train_dataset) - val_size
+        use_stratified_split = self.config.get("training.use_stratified_split", True)
 
-        train_subset, val_subset = data.random_split(
-            train_dataset,
-            [train_size, val_size],
-            generator=torch.Generator().manual_seed(self.config.get("seed", 42)),
-        )
+        if use_stratified_split:
+            # Use stratified split to prevent dataset imbalance
+            train_subset, val_subset = self._create_stratified_split(
+                train_dataset,
+                val_ratio=val_ratio,
+                random_state=self.config.get("seed", 42),
+            )
+        else:
+            # Use random split (original behavior)
+            val_size = max(1, int(len(train_dataset) * val_ratio))
+            train_size = len(train_dataset) - val_size
+
+            train_subset, val_subset = data.random_split(
+                train_dataset,
+                [train_size, val_size],
+                generator=torch.Generator().manual_seed(self.config.get("seed", 42)),
+            )
 
         # Create test dataset
         test_dataset = ChestXrayKnownDataset(

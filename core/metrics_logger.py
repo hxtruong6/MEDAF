@@ -355,7 +355,7 @@ class TrainingProgressTracker:
     def __init__(
         self,
         patience: int = 10,
-        min_delta: float = 1e-4,
+        min_delta: float = 1e-5,
         monitor: str = "val_loss",
         mode: str = "min",
     ):
@@ -411,7 +411,7 @@ class TrainingProgressTracker:
 # Example usage and testing
 if __name__ == "__main__":
     # Test metrics logger
-    logger = MetricsLogger("/tmp/test_logs", "test_experiment")
+    logger = MetricsLogger("./logs/test_logs", "test_experiment")
 
     # Simulate training epochs
     for epoch in range(10):
