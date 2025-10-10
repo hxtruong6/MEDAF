@@ -28,6 +28,7 @@ training:
   # Loss Configuration
   loss:
     type: "bce" # focal, bce, weighted_bce
+    # type: "focal"
     focal_alpha: 1.0
     focal_gamma: 2.0
     class_weighting:
@@ -39,10 +40,17 @@ training:
   use_optimal_thresholds: true
   use_stratified_split: true # Use stratified split to prevent dataset imbalance
   calculate_train_auc: false # Calculate AUC for training data (expensive, set to true for detailed analysis)
-  
+
   # Evaluation Features
   calculate_eval_auc: true # Calculate AUC scores during evaluation (recommended)
   create_roc_plots: true # Create ROC curve plots during evaluation
+
+  # Early Stopping Configuration
+  early_stopping:
+    patience: 15
+    min_delta: 1e-5
+    monitor: "val_loss"
+    mode: "min"
 
 # Model Configuration
 model:
@@ -65,10 +73,11 @@ checkpoints:
   keep_best: true
 
   # Resume Training
-  resume_from: null # Path to checkpoint file
+  # resume_from: null # Path to checkpoint file
+  resume_from: "/home/s2320437/WORK/aidan-medaf/checkpoints/medaf_phase1/medaf_phase1_chestxray_epoch_29_1759624078.pt"
 
   # Evaluation
-  evaluation_checkpoint: "/home/s2320437/WORK/aidan-medaf/checkpoints/medaf_phase1/medaf_phase1_chestxray_epoch_29_1759624078.pt"
+  evaluation_checkpoint: "/home/s2320437/WORK/aidan-medaf/checkpoints/medaf_phase1/medaf_epoch_9_1759918531.pt"
 
 # Logging Configuration
 logging:
