@@ -38,6 +38,11 @@ training:
   enhanced_training: true
   use_optimal_thresholds: true
   use_stratified_split: true # Use stratified split to prevent dataset imbalance
+  calculate_train_auc: false # Calculate AUC for training data (expensive, set to true for detailed analysis)
+  
+  # Evaluation Features
+  calculate_eval_auc: true # Calculate AUC scores during evaluation (recommended)
+  create_roc_plots: true # Create ROC curve plots during evaluation
 
 # Model Configuration
 model:

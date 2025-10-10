@@ -25,9 +25,14 @@ from core.training_utils import (
     optimize_thresholds_per_class,
     evaluate_with_optimal_thresholds,
     print_enhanced_results,
+    print_standard_results,
+    print_auc_results,
+    calculate_multilabel_accuracy,
     train_multilabel_enhanced,
     train_multilabel_enhanced_with_metrics,
     calculate_multilabel_attention_diversity,
+    calculate_multilabel_auc,
+    calculate_roc_curves,
 )
 from test_multilabel_medaf import ChestXrayKnownDataset
 
@@ -57,7 +62,7 @@ class MEDAFTrainer:
         # Initialize progress tracker for early stopping
         self.progress_tracker = TrainingProgressTracker(
             patience=self.config.get("training.early_stopping.patience", 10),
-            min_delta=self.config.get("training.early_stopping.min_delta", 1e-4),
+            min_delta=float(self.config.get("training.early_stopping.min_delta", 1e-5)),
             monitor="val_loss",
             mode="min",
         )
@@ -372,7 +377,7 @@ class MEDAFTrainer:
         optimizer: torch.optim.Optimizer,
         epoch: int,
     ) -> Dict[str, float]:
-        """Train for one epoch using enhanced multi-label training"""
+        """Train for one epoch using enhanced multi-label training with AUC calculation"""
         model.train()
 
         # Get model arguments for enhanced training
@@ -391,6 +396,45 @@ class MEDAFTrainer:
             device=self.device,
         )
 
+        # Calculate AUC scores for training data (optional, can be expensive)
+        calculate_train_auc = self.config.get("training.calculate_train_auc", False)
+        train_auc_metrics = {}
+
+        if calculate_train_auc:
+            # Note: This is computationally expensive for large datasets
+            # Consider calculating only every few epochs or on a subset
+            self.logger.info("Calculating training AUC scores...")
+            all_predictions = []
+            all_targets = []
+
+            model.eval()
+            with torch.no_grad():
+                for inputs, targets in train_loader:
+                    inputs = inputs.to(self.device, non_blocking=True)
+                    targets = targets.to(self.device, non_blocking=True)
+
+                    output_dict = model(inputs, targets)
+                    logits = output_dict["logits"]
+
+                    all_predictions.append(logits[3])
+                    all_targets.append(targets)
+
+            all_predictions = torch.cat(all_predictions, dim=0)
+            all_targets = torch.cat(all_targets, dim=0)
+
+            class_names = self.config.get("class_names", [])
+            auc_results = calculate_multilabel_auc(
+                all_predictions, all_targets, class_names
+            )
+
+            train_auc_metrics = {
+                "macro_auc": auc_results["macro_auc"],
+                "micro_auc": auc_results["micro_auc"],
+                "weighted_auc": auc_results["weighted_auc"],
+            }
+
+            model.train()  # Set back to training mode
+
         # Return metrics in the expected format
         return {
             "loss": metrics["total_loss"],
@@ -398,17 +442,22 @@ class MEDAFTrainer:
             "expert_loss": metrics["expert_loss"],
             "gate_loss": metrics["gate_loss"],
             "diversity_loss": metrics["diversity_loss"],
+            **train_auc_metrics,  # Include AUC metrics if calculated
         }
 
     def _validate_epoch(
         self, model: nn.Module, val_loader: data.DataLoader, criterion: nn.Module
     ) -> Dict[str, float]:
-        """Validate for one epoch"""
+        """Validate for one epoch with AUC calculation"""
         model.eval()
 
         total_loss = 0.0
         total_samples = 0
         correct_predictions = 0
+
+        # Store all predictions and targets for AUC calculation
+        all_predictions = []
+        all_targets = []
 
         with torch.no_grad():
             for inputs, targets in val_loader:
@@ -430,10 +479,30 @@ class MEDAFTrainer:
                 predictions = torch.sigmoid(logits[3]) > 0.5
                 correct_predictions += (predictions == targets).all(dim=1).sum().item()
 
+                # Store for AUC calculation
+                all_predictions.append(logits[3])
+                all_targets.append(targets)
+
+        # Concatenate all predictions and targets
+        all_predictions = torch.cat(all_predictions, dim=0)
+        all_targets = torch.cat(all_targets, dim=0)
+
+        # Calculate AUC scores
+        class_names = self.config.get("class_names", [])
+        auc_results = calculate_multilabel_auc(
+            all_predictions, all_targets, class_names
+        )
+
         avg_loss = total_loss / len(val_loader)
         accuracy = correct_predictions / total_samples
 
-        return {"loss": avg_loss, "accuracy": accuracy}
+        return {
+            "loss": avg_loss,
+            "accuracy": accuracy,
+            "macro_auc": auc_results["macro_auc"],
+            "micro_auc": auc_results["micro_auc"],
+            "weighted_auc": auc_results["weighted_auc"],
+        }
 
     def train(self) -> Dict[str, Any]:
         """Main training loop"""
@@ -483,6 +552,13 @@ class MEDAFTrainer:
                 expert_loss=train_metrics["expert_loss"],
                 gate_loss=train_metrics["gate_loss"],
                 diversity_loss=train_metrics["diversity_loss"],
+                # AUC metrics
+                train_macro_auc=train_metrics.get("macro_auc"),
+                val_macro_auc=val_metrics.get("macro_auc"),
+                train_micro_auc=train_metrics.get("micro_auc"),
+                val_micro_auc=val_metrics.get("micro_auc"),
+                train_weighted_auc=train_metrics.get("weighted_auc"),
+                val_weighted_auc=val_metrics.get("weighted_auc"),
             )
 
             # Log metrics
@@ -507,6 +583,7 @@ class MEDAFTrainer:
         # Create final plots and summary
         self.metrics_logger.create_training_plots()
         self.metrics_logger.create_loss_breakdown_plot()
+        self.metrics_logger.create_auc_plots()  # Create AUC plots
         summary = self.metrics_logger.create_summary_report()
 
         return {
@@ -603,13 +680,124 @@ class MEDAFTrainer:
                 model, eval_loader, self.device, optimal_thresholds, class_names
             )
 
+            # Calculate AUC scores and ROC curves for final evaluation if enabled
+            calculate_eval_auc = self.config.get("training.calculate_eval_auc", True)
+            create_roc_plots = self.config.get("training.create_roc_plots", True)
+
+            if calculate_eval_auc:
+                self.logger.info("Calculating final AUC scores and ROC curves...")
+                all_predictions = []
+                all_targets = []
+
+                with torch.no_grad():
+                    for inputs, targets in eval_loader:
+                        inputs = inputs.to(self.device, non_blocking=True)
+                        targets = targets.to(self.device, non_blocking=True)
+
+                        output_dict = model(inputs, targets)
+                        logits = output_dict["logits"]
+
+                        all_predictions.append(logits[3])
+                        all_targets.append(targets)
+
+                all_predictions = torch.cat(all_predictions, dim=0)
+                all_targets = torch.cat(all_targets, dim=0)
+
+                # Calculate AUC scores
+                auc_results = calculate_multilabel_auc(
+                    all_predictions, all_targets, class_names
+                )
+                results["auc_metrics"] = auc_results
+
+                # Calculate ROC curves and create plots if enabled
+                if create_roc_plots:
+                    roc_data = calculate_roc_curves(
+                        all_predictions, all_targets, class_names
+                    )
+                    self.metrics_logger.create_roc_curve_plot(roc_data)
+            else:
+                self.logger.info("AUC calculation disabled in configuration")
+
             print_enhanced_results(results)
 
         else:
-            # Standard evaluation
-            self.logger.info("Standard evaluation (threshold=0.5)")
-            # Implement standard evaluation here
-            results = {"message": "Standard evaluation not implemented yet"}
+            # Standard evaluation with AUC calculation
+            self.logger.info("Standard evaluation (threshold=0.5) with AUC calculation")
+
+            # Collect all predictions and targets
+            all_predictions = []
+            all_targets = []
+            total_loss = 0.0
+            num_batches = 0
+
+            with torch.no_grad():
+                for inputs, targets in test_loader:
+                    inputs = inputs.to(self.device, non_blocking=True)
+                    targets = targets.to(self.device, non_blocking=True)
+
+                    # Forward pass
+                    output_dict = model(inputs, targets)
+                    logits = output_dict["logits"]
+
+                    # Calculate loss
+                    criterion = self._create_loss_function(test_loader)
+                    loss = criterion(logits[3], targets.float())
+                    total_loss += loss.item()
+                    num_batches += 1
+
+                    # Store predictions and targets
+                    all_predictions.append(logits[3])
+                    all_targets.append(targets)
+
+            # Concatenate all results
+            all_predictions = torch.cat(all_predictions, dim=0)
+            all_targets = torch.cat(all_targets, dim=0)
+
+            # Calculate standard metrics with threshold=0.5
+            class_names = self.config.get("class_names", [])
+            subset_acc, hamming_acc, precision, recall, f1 = (
+                calculate_multilabel_accuracy(
+                    all_predictions, all_targets, threshold=0.5
+                )
+            )
+
+            # Calculate AUC scores and ROC curves if enabled
+            calculate_eval_auc = self.config.get("training.calculate_eval_auc", True)
+            create_roc_plots = self.config.get("training.create_roc_plots", True)
+
+            if calculate_eval_auc:
+                # Calculate AUC scores
+                auc_results = calculate_multilabel_auc(
+                    all_predictions, all_targets, class_names
+                )
+
+                # Calculate ROC curves and create plots if enabled
+                if create_roc_plots:
+                    roc_data = calculate_roc_curves(
+                        all_predictions, all_targets, class_names
+                    )
+                    self.metrics_logger.create_roc_curve_plot(roc_data)
+            else:
+                self.logger.info("AUC calculation disabled in configuration")
+                auc_results = None
+
+            # Compile results
+            results = {
+                "overall": {
+                    "subset_accuracy": subset_acc,
+                    "hamming_accuracy": hamming_acc,
+                    "precision": precision,
+                    "recall": recall,
+                    "f1_score": f1,
+                    "average_loss": total_loss / num_batches,
+                },
+                "auc_metrics": auc_results,
+                "threshold_method": "fixed_0.5",
+                "class_names": class_names,
+            }
+
+            # Print results
+            print_standard_results(results)
 
         return results
 

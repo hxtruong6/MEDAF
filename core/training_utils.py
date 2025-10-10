@@ -10,6 +10,7 @@ import torch.nn.functional as F
 import numpy as np
 from typing import List, Dict, Any, Optional, Tuple, Union
 from misc.util import AverageMeter, update_meter
+from sklearn.metrics import roc_auc_score, roc_curve, precision_recall_curve
 
 
 # ============================================================================
@@ -426,6 +427,147 @@ def calculate_multilabel_accuracy(
 
 
 # ============================================================================
+# AUC CALCULATION FOR MULTI-LABEL CLASSIFICATION
+# ============================================================================
+
+
+def calculate_multilabel_auc(
+    predictions: torch.Tensor,
+    targets: torch.Tensor,
+    class_names: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    Calculate AUC scores for multi-label classification.
+
+    Args:
+        predictions: Model predictions [B, num_classes] (logits or probabilities)
+        targets: Multi-hot ground truth [B, num_classes]
+        class_names: List of class names for per-class results
+
+    Returns:
+        Dictionary containing AUC metrics
+    """
+    with torch.no_grad():
+        # Convert logits to probabilities if needed
+        if predictions.max() > 1.0 or predictions.min() < 0.0:
+            probs = torch.sigmoid(predictions)
+        else:
+            probs = predictions
+
+        # Convert to numpy
+        probs_np = probs.cpu().numpy()
+        targets_np = targets.cpu().numpy()
+
+        num_classes = probs_np.shape[1]
+
+        # Calculate per-class AUC
+        per_class_auc = {}
+        valid_classes = []
+
+        for i in range(num_classes):
+            class_name = class_names[i] if class_names else f"Class_{i}"
+
+            # Check if class has both positive and negative samples
+            if targets_np[:, i].sum() > 0 and targets_np[:, i].sum() < len(targets_np):
+                try:
+                    auc_score = roc_auc_score(targets_np[:, i], probs_np[:, i])
+                    per_class_auc[class_name] = auc_score
+                    valid_classes.append(auc_score)
+                except ValueError:
+                    # Handle edge cases (e.g., all positive or all negative)
+                    per_class_auc[class_name] = 0.5
+                    valid_classes.append(0.5)
+            else:
+                per_class_auc[class_name] = 0.5  # Default for invalid classes
+                valid_classes.append(0.5)
+
+        # Calculate macro and micro AUC
+        macro_auc = np.mean(valid_classes) if valid_classes else 0.5
+
+        # For micro AUC, we need to flatten all predictions and targets
+        try:
+            micro_auc = roc_auc_score(targets_np.ravel(), probs_np.ravel())
+        except ValueError:
+            micro_auc = 0.5
+
+        # Calculate weighted AUC (weighted by class frequency)
+        class_weights = targets_np.sum(axis=0)
+        class_weights = class_weights / class_weights.sum()
+        weighted_auc = np.sum(
+            [auc * weight for auc, weight in zip(valid_classes, class_weights)]
+        )
+
+        return {
+            "macro_auc": macro_auc,
+            "micro_auc": micro_auc,
+            "weighted_auc": weighted_auc,
+            "per_class_auc": per_class_auc,
+            "valid_classes": len(valid_classes),
+            "total_classes": num_classes,
+        }
+
+
+def calculate_roc_curves(
+    predictions: torch.Tensor,
+    targets: torch.Tensor,
+    class_names: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    Calculate ROC curves for multi-label classification.
+
+    Args:
+        predictions: Model predictions [B, num_classes] (logits or probabilities)
+        targets: Multi-hot ground truth [B, num_classes]
+        class_names: List of class names for per-class results
+
+    Returns:
+        Dictionary containing ROC curve data
+    """
+    with torch.no_grad():
+        # Convert logits to probabilities if needed
+        if predictions.max() > 1.0 or predictions.min() < 0.0:
+            probs = torch.sigmoid(predictions)
+        else:
+            probs = predictions
+
+        # Convert to numpy
+        probs_np = probs.cpu().numpy()
+        targets_np = targets.cpu().numpy()
+
+        num_classes = probs_np.shape[1]
+        roc_curves_data = {}
+
+        for i in range(num_classes):
+            class_name = class_names[i] if class_names else f"Class_{i}"
+
+            # Check if class has both positive and negative samples
+            if targets_np[:, i].sum() > 0 and targets_np[:, i].sum() < len(targets_np):
+                try:
+                    fpr, tpr, thresholds = roc_curve(targets_np[:, i], probs_np[:, i])
+                    roc_curves_data[class_name] = {
+                        "fpr": fpr,
+                        "tpr": tpr,
+                        "thresholds": thresholds,
+                    }
+                except ValueError:
+                    # Handle edge cases
+                    roc_curves_data[class_name] = {
+                        "fpr": np.array([0, 1]),
+                        "tpr": np.array([0, 1]),
+                        "thresholds": np.array([1, 0]),
+                    }
+            else:
+                # Default diagonal line for invalid classes
+                roc_curves_data[class_name] = {
+                    "fpr": np.array([0, 1]),
+                    "tpr": np.array([0, 1]),
+                    "thresholds": np.array([1, 0]),
+                }
+
+        return roc_curves_data
+
+
+# ============================================================================
 # ATTENTION DIVERSITY LOSS
 # ============================================================================
 
@@ -549,6 +691,10 @@ def print_enhanced_results(results: Dict[str, Any]):
             f"📉 Worst Class: {class_names[worst_idx]} (F1={f1_scores[worst_idx]:.4f})"
         )
 
+    # AUC metrics if available
+    if "auc_metrics" in results:
+        print_auc_results(results["auc_metrics"])
+
     # Improvement assessment
     print(f"\n💡 Model Assessment:")
     if overall["f1_score"] < 0.2:
@@ -562,6 +708,94 @@ def print_enhanced_results(results: Dict[str, Any]):
     else:
         print("   ✅ Model shows strong performance with optimal thresholds!")
         print("   🎯 Consider: fine-tuning for production deployment")
+
+
+def print_auc_results(auc_metrics: Dict[str, Any]):
+    """Print comprehensive AUC results"""
+    print(f"\n📈 AUC Performance Metrics:")
+    print(f"   Macro AUC:    {auc_metrics['macro_auc']:.4f}")
+    print(f"   Micro AUC:    {auc_metrics['micro_auc']:.4f}")
+    print(f"   Weighted AUC: {auc_metrics['weighted_auc']:.4f}")
+    print(
+        f"   Valid Classes: {auc_metrics['valid_classes']}/{auc_metrics['total_classes']}"
+    )
+
+    # Per-class AUC scores
+    print(f"\n🏷️  Per-Class AUC Scores:")
+    print(f"   {'Class':<15} {'AUC Score':<10} {'Performance':<15}")
+    print("   " + "-" * 45)
+
+    per_class_auc = auc_metrics["per_class_auc"]
+    for class_name, auc_score in per_class_auc.items():
+        if auc_score >= 0.9:
+            performance = "Excellent"
+        elif auc_score >= 0.8:
+            performance = "Good"
+        elif auc_score >= 0.7:
+            performance = "Fair"
+        elif auc_score >= 0.6:
+            performance = "Poor"
+        else:
+            performance = "Very Poor"
+
+        print(f"   {class_name:<15} {auc_score:<10.4f} {performance:<15}")
+
+    # AUC assessment
+    macro_auc = auc_metrics["macro_auc"]
+    print(f"\n💡 AUC Assessment:")
+    if macro_auc >= 0.9:
+        print("   ✅ Excellent discrimination ability!")
+    elif macro_auc >= 0.8:
+        print("   🔶 Good discrimination ability")
+    elif macro_auc >= 0.7:
+        print("   ⚠️  Fair discrimination ability - consider model improvements")
+    else:
+        print("   ❌ Poor discrimination ability - model needs significant improvement")
+
+
+def print_standard_results(results: Dict[str, Any]):
+    """Print standard evaluation results with fixed threshold=0.5"""
+    print("\n" + "=" * 80)
+    print("🎯 STANDARD MEDAF EVALUATION RESULTS (Threshold=0.5)")
+    print("=" * 80)
+
+    overall = results["overall"]
+    print(f"\n📊 Overall Performance:")
+    print(
+        f"   Subset Accuracy:  {overall['subset_accuracy']:.4f} ({overall['subset_accuracy']*100:.2f}%)"
+    )
+    print(
+        f"   Hamming Accuracy: {overall['hamming_accuracy']:.4f} ({overall['hamming_accuracy']*100:.2f}%)"
+    )
+    print(f"   Precision:        {overall['precision']:.4f}")
+    print(f"   Recall:           {overall['recall']:.4f}")
+    print(f"   F1-Score:         {overall['f1_score']:.4f}")
+    print(f"   Average Loss:     {overall['average_loss']:.4f}")
+
+    # AUC metrics
+    if "auc_metrics" in results:
+        print_auc_results(results["auc_metrics"])
+
+    # Model assessment
+    print(f"\n💡 Model Assessment:")
+    if overall["f1_score"] < 0.2:
+        print("   ⚠️  Model still needs improvement (F1 < 0.2)")
+        print(
+            "   📈 Consider: longer training, better data augmentation, loss weight tuning"
+        )
+        print("   🎯 Try enabling optimal thresholds for better performance")
+    elif overall["f1_score"] < 0.4:
+        print("   🔶 Model shows moderate performance with fixed threshold")
+        print(
+            "   📈 Consider: enabling optimal thresholds, expert configuration tuning"
+        )
+    else:
+        print("   ✅ Model shows good performance with fixed threshold!")
+        print("   🎯 Consider: enabling optimal thresholds for even better results")
+
+    print(
+        f"\n💡 Note: Using fixed threshold=0.5. Enable 'use_optimal_thresholds: true' for better performance."
+    )
 
 
 # ============================================================================
