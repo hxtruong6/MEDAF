@@ -41,6 +41,16 @@ KNOWN_LABELS = [
     "Pneumothorax",
 ]
 
+# Unknown/Novel labels for novelty detection
+UNKNOWN_LABELS = [
+    "Consolidation",
+    "Edema",
+    "Emphysema",
+    "Fibrosis",
+    "Pleural_Thickening",
+    "Hernia",
+]
+
 CHESTXRAY_IMAGE_ROOT = Path("datasets/data/NIH/images-224")
 CHESTXRAY_CSV_CANDIDATES = [
     Path("datasets/data/NIH/chestxray_train_known.csv"),
@@ -151,6 +161,211 @@ class ChestXrayKnownDataset(data.Dataset):
                 labels[self.label_to_idx[label]] = 1.0
 
         return image, labels
+
+
+class ChestXrayUnknownDataset(data.Dataset):
+    """
+    Dataset for ChestX-ray14 samples containing UNKNOWN/NOVEL labels.
+
+    This dataset is designed for novelty detection evaluation. It loads samples that contain
+    at least one unknown label (from UNKNOWN_LABELS) to test the model's ability to detect
+    novel/out-of-distribution samples.
+
+    Three types of samples:
+    1. Independent Novelty: Only unknown labels present
+    2. Mixed Novelty: Both known and unknown labels present (most realistic)
+    3. Known labels only (for comparison)
+    """
+
+    def __init__(
+        self,
+        csv_path,
+        image_root,
+        img_size=224,
+        max_samples=None,
+        transform=None,
+        novelty_type="all",  # "all", "independent", "mixed", "known_only"
+    ):
+        """
+        Args:
+            csv_path: Path to CSV file (e.g., chestxray_strategy1_test.csv)
+            image_root: Path to image directory
+            img_size: Image size for resizing
+            max_samples: Maximum number of samples to load (None = all)
+            transform: Optional custom transform
+            novelty_type: Type of samples to include:
+                - "all": All samples with any unknown labels
+                - "independent": Only samples with ONLY unknown labels (no known labels)
+                - "mixed": Only samples with BOTH known and unknown labels
+                - "known_only": Only samples with ONLY known labels (no unknown labels)
+        """
+        self.csv_path = Path(csv_path)
+        self.image_root = Path(image_root)
+        self.img_size = img_size
+        self.novelty_type = novelty_type
+
+        if not self.csv_path.exists():
+            raise FileNotFoundError(f"ChestX-ray CSV not found: {self.csv_path}")
+        if not self.image_root.exists():
+            raise FileNotFoundError(
+                f"ChestX-ray image directory not found: {self.image_root}"
+            )
+
+        if transform is None:
+            self.transform = transforms.Compose(
+                [
+                    transforms.Resize((img_size, img_size)),
+                    transforms.ToTensor(),
+                    transforms.Normalize(
+                        mean=[0.485, 0.456, 0.406],
+                        std=[0.229, 0.224, 0.225],
+                    ),
+                ]
+            )
+        else:
+            self.transform = transform
+
+        # Map known labels to indices (for supervision during evaluation)
+        self.label_to_idx = {label: idx for idx, label in enumerate(KNOWN_LABELS)}
+        self.num_classes = len(self.label_to_idx)
+
+        # Load and filter dataset based on novelty type
+        df = pd.read_csv(self.csv_path)
+
+        # Filter based on novelty type
+        filtered_records = []
+        for _, row in df.iterrows():
+            labels = self._parse_labels(row)
+
+            has_known = any(label in KNOWN_LABELS for label in labels)
+            has_unknown = any(label in UNKNOWN_LABELS for label in labels)
+
+            if novelty_type == "all":
+                if has_unknown:  # Any sample with unknown labels
+                    filtered_records.append(row)
+            elif novelty_type == "independent":
+                if has_unknown and not has_known:  # Only unknown labels
+                    filtered_records.append(row)
+            elif novelty_type == "mixed":
+                if has_unknown and has_known:  # Both known and unknown
+                    filtered_records.append(row)
+            elif novelty_type == "known_only":
+                if has_known and not has_unknown:  # Only known labels
+                    filtered_records.append(row)
+
+        # Create dataframe from filtered records
+        if filtered_records:
+            df = pd.DataFrame(filtered_records)
+        else:
+            print(f"⚠️  Warning: No samples found for novelty_type='{novelty_type}'")
+            df = pd.DataFrame()
+
+        # Sample if max_samples is specified
+        if max_samples is not None and max_samples < len(df):
+            df = df.sample(n=max_samples, random_state=42).reset_index(drop=True)
+        else:
+            df = df.reset_index(drop=True)
+
+        self.records = df.to_dict("records")
+
+        print(
+            f"Loaded {len(self.records)} {novelty_type} samples for novelty detection"
+        )
+
+    def _parse_labels(self, row):
+        """Parse labels from CSV row (handles multiple column formats)"""
+        labels = []
+
+        # Try different column names
+        for col_name in ["Finding Labels", "known_labels", "new_labels", "all_labels"]:
+            if col_name in row and not pd.isna(row[col_name]):
+                parsed = self._parse_label_list(row[col_name])
+                labels.extend(parsed)
+
+        # Remove duplicates and filter out "No Finding"
+        labels = [label for label in set(labels) if label != "No Finding"]
+        return labels
+
+    @staticmethod
+    def _parse_label_list(raw_value):
+        """Parse label list from various formats"""
+        if isinstance(raw_value, list):
+            return raw_value
+        if pd.isna(raw_value):
+            return []
+        if isinstance(raw_value, str):
+            raw_value = raw_value.strip()
+            if not raw_value:
+                return []
+            try:
+                parsed = ast.literal_eval(raw_value)
+                if isinstance(parsed, (list, tuple)):
+                    return list(parsed)
+                if isinstance(parsed, str):
+                    return [parsed]
+            except (ValueError, SyntaxError):
+                pass
+            return [item.strip() for item in raw_value.split("|") if item.strip()]
+        return []
+
+    def __len__(self):
+        return len(self.records)
+
+    def __getitem__(self, idx):
+        """
+        Returns:
+            image: Preprocessed image tensor
+            labels: Binary label vector for KNOWN labels only
+            metadata: Dictionary with additional info about unknown labels
+        """
+        record = self.records[idx]
+        image_path = self.image_root / record["Image Index"]
+        if not image_path.exists():
+            raise FileNotFoundError(f"Missing image: {image_path}")
+
+        # Load and transform image
+        image = Image.open(image_path).convert("RGB")
+        image = self.transform(image)
+
+        # Parse all labels
+        all_labels = self._parse_labels(record)
+
+        # Create binary vector for KNOWN labels only (for supervision)
+        labels = torch.zeros(self.num_classes, dtype=torch.float32)
+        known_present = []
+        unknown_present = []
+
+        for label in all_labels:
+            if label in self.label_to_idx:
+                labels[self.label_to_idx[label]] = 1.0
+                known_present.append(label)
+            elif label in UNKNOWN_LABELS:
+                unknown_present.append(label)
+
+        # Store metadata about the sample
+        metadata = {
+            "known_labels": known_present,
+            "unknown_labels": unknown_present,
+            "has_known": len(known_present) > 0,
+            "has_unknown": len(unknown_present) > 0,
+            "novelty_type": self._classify_novelty_type(known_present, unknown_present),
+        }
+
+        return image, labels, metadata
+
+    def _classify_novelty_type(self, known_labels, unknown_labels):
+        """Classify the type of novelty in the sample"""
+        has_known = len(known_labels) > 0
+        has_unknown = len(unknown_labels) > 0
+
+        if has_unknown and not has_known:
+            return "independent"
+        elif has_unknown and has_known:
+            return "mixed"
+        elif has_known and not has_unknown:
+            return "known_only"
+        else:
+            return "no_labels"
 
 
 def test_model_forward():

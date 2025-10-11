@@ -121,5 +121,13 @@ class_names:
 paths:
   current_dir: "/home/s2320437/WORK/aidan-medaf"
 
+# Novelty Detection Configuration
+novelty_detection:
+  enabled: true # Enable novelty detection evaluation
+  gamma: 1.0 # Weight for feature-based score in hybrid computation
+  temperature: 1.0 # Temperature for logit-based energy computation
+  fpr_target: 0.05 # Target false positive rate for threshold calibration (5%)
+  max_unknown_samples: null # Maximum unknown samples for evaluation (null = all)
+
 # Reproducibility
 seed: 42

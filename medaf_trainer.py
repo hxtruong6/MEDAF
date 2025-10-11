@@ -34,7 +34,11 @@ from core.training_utils import (
     calculate_multilabel_auc,
     calculate_roc_curves,
 )
-from test_multilabel_medaf import ChestXrayKnownDataset
+from core.multilabel_novelty_detection import (
+    MultiLabelNoveltyDetector,
+    evaluate_novelty_detection,
+)
+from test_multilabel_medaf import ChestXrayKnownDataset, ChestXrayUnknownDataset
 
 
 class MEDAFTrainer:
@@ -618,8 +622,282 @@ class MEDAFTrainer:
         torch.save(checkpoint, checkpoint_path)
         self.logger.info(f"Checkpoint saved: {checkpoint_path}")
 
+    def _calibrate_novelty_detector(
+        self, model: nn.Module, val_loader: data.DataLoader
+    ) -> MultiLabelNoveltyDetector:
+        """
+        Calibrate novelty detector on validation data containing only known samples.
+
+        Args:
+            model: Trained MEDAF model
+            val_loader: Validation data loader (known samples only)
+
+        Returns:
+            Calibrated MultiLabelNoveltyDetector instance
+        """
+        self.logger.info("Calibrating novelty detector...")
+
+        # Get novelty detection parameters from config
+        gamma = self.config.get("novelty_detection.gamma", 1.0)
+        temperature = self.config.get("novelty_detection.temperature", 1.0)
+        fpr_target = self.config.get("novelty_detection.fpr_target", 0.05)
+
+        # Create detector
+        detector = MultiLabelNoveltyDetector(gamma=gamma, temperature=temperature)
+
+        # Calibrate threshold
+        detector.calibrate_threshold(
+            model, val_loader, self.device, fpr_target=fpr_target
+        )
+
+        self.logger.info(
+            f"✅ Novelty detector calibrated (threshold={detector.threshold:.4f})"
+        )
+
+        return detector
+
+    def _create_unknown_data_loader(
+        self, novelty_type: str = "all", max_samples: Optional[int] = None
+    ) -> data.DataLoader:
+        """
+        Create data loader for unknown/novel samples.
+
+        Args:
+            novelty_type: Type of novelty samples to load ("all", "independent", "mixed", "known_only")
+            max_samples: Maximum number of samples (None = all)
+
+        Returns:
+            DataLoader for unknown samples
+        """
+        self.logger.info(
+            f"Creating unknown data loader (novelty_type={novelty_type})..."
+        )
+
+        # Create unknown dataset
+        unknown_dataset = ChestXrayUnknownDataset(
+            csv_path=self.config.get("data.test_csv"),
+            image_root=self.config.get("data.image_root"),
+            img_size=self.config.get("data.img_size", 224),
+            max_samples=max_samples,
+            novelty_type=novelty_type,
+        )
+
+        # Create data loader
+        batch_size = self.config.get("training.batch_size", 32)
+        num_workers = self.config.get("training.num_workers", 1)
+        pin_memory = (
+            self.config.get("hardware.pin_memory", True) and self.device.type == "cuda"
+        )
+
+        unknown_loader = data.DataLoader(
+            unknown_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
+
+        self.logger.info(f"Unknown data loader created: {len(unknown_dataset)} samples")
+
+        return unknown_loader
+
+    def evaluate_novelty_detection(
+        self, checkpoint_path: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Evaluate model's ability to detect unknown/novel samples.
+
+        This method:
+        1. Loads the trained model
+        2. Calibrates the novelty detector on known validation data
+        3. Evaluates detection performance on unknown samples
+        4. Reports AUROC, precision, recall, and F1 for novelty detection
+
+        Args:
+            checkpoint_path: Path to model checkpoint (uses config default if None)
+
+        Returns:
+            Dictionary containing novelty detection evaluation results
+        """
+        if checkpoint_path is None:
+            checkpoint_path = self.config.get("checkpoints.evaluation_checkpoint")
+
+        if not checkpoint_path or not Path(checkpoint_path).exists():
+            raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+
+        self.logger.info(f"Loading checkpoint for novelty detection: {checkpoint_path}")
+
+        # Load checkpoint and create model
+        checkpoint = torch.load(
+            checkpoint_path, map_location=self.device, weights_only=False
+        )
+
+        model = self._create_model()
+
+        # Handle different checkpoint formats
+        if "model_state_dict" in checkpoint:
+            model.load_state_dict(checkpoint["model_state_dict"])
+        elif "state_dict" in checkpoint:
+            model.load_state_dict(checkpoint["state_dict"])
+        else:
+            raise KeyError(
+                f"Checkpoint does not contain model state. Available keys: {list(checkpoint.keys())}"
+            )
+
+        model.eval()
+
+        # Create data loaders
+        train_loader, val_loader, test_loader = self._create_data_loaders()
+
+        # Calibrate novelty detector on validation data (known samples only)
+        detector = self._calibrate_novelty_detector(model, val_loader)
+
+        # Create unknown data loader
+        max_unknown_samples = int(
+            self.config.get("novelty_detection.max_unknown_samples")
+        )
+        unknown_loader = self._create_unknown_data_loader(
+            novelty_type="all", max_samples=max_unknown_samples
+        )
+
+        # Evaluate novelty detection performance
+        self.logger.info("Evaluating novelty detection performance...")
+        novelty_results = evaluate_novelty_detection(
+            model, test_loader, unknown_loader, self.device, detector
+        )
+
+        # Print results
+        self._print_novelty_detection_results(novelty_results)
+
+        return novelty_results
+
+    def _print_novelty_detection_results(self, results: Dict[str, Any]):
+        """Print formatted novelty detection results"""
+        print("\n" + "=" * 70)
+        print("🔍 NOVELTY DETECTION EVALUATION RESULTS")
+        print("=" * 70)
+
+        print("\n📊 Overall Novelty Detection Performance:")
+        print(f"   AUROC:              {results['auroc']:.4f}")
+        print(
+            f"   Detection Accuracy: {results['detection_accuracy']:.4f} ({results['detection_accuracy']*100:.2f}%)"
+        )
+        print(f"   Precision:          {results['precision']:.4f}")
+        print(f"   Recall:             {results['recall']:.4f}")
+        print(f"   F1-Score:           {results['f1_score']:.4f}")
+
+        print(f"\n🎯 Detection Threshold: {results['threshold']:.4f}")
+        print(f"   Known samples:   {results['num_known']}")
+        print(f"   Unknown samples: {results['num_unknown']}")
+
+        # Performance assessment
+        auroc = results["auroc"]
+        if auroc >= 0.9:
+            assessment = "Excellent 🎉"
+        elif auroc >= 0.8:
+            assessment = "Good 👍"
+        elif auroc >= 0.7:
+            assessment = "Fair 🆗"
+        else:
+            assessment = "Needs Improvement ⚠️"
+
+        print(f"\n💡 Performance Assessment: {assessment}")
+        print("=" * 70)
+
+    def evaluate_comprehensive(
+        self, checkpoint_path: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Comprehensive evaluation combining known label classification AND novelty detection.
+
+        This is the complete evaluation pipeline that:
+        1. Evaluates classification performance on known labels
+        2. Evaluates novelty detection on unknown samples
+        3. Provides detailed analysis of both capabilities
+
+        Args:
+            checkpoint_path: Path to model checkpoint (uses config default if None)
+
+        Returns:
+            Dictionary containing both classification and novelty detection results
+        """
+        if checkpoint_path is None:
+            checkpoint_path = self.config.get("checkpoints.evaluation_checkpoint")
+
+        if not checkpoint_path or not Path(checkpoint_path).exists():
+            raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+
+        self.logger.info("=" * 70)
+        self.logger.info(
+            "COMPREHENSIVE EVALUATION: Known Classification + Novelty Detection"
+        )
+        self.logger.info("=" * 70)
+
+        # 1. Evaluate known label classification
+        self.logger.info("\n[1/2] Evaluating known label classification...")
+        classification_results = self.evaluate(checkpoint_path)
+
+        # 2. Evaluate novelty detection
+        enable_novelty = self.config.get("novelty_detection.enabled", True)
+        novelty_results = None
+
+        if enable_novelty:
+            self.logger.info("\n[2/2] Evaluating novelty detection...")
+            try:
+                novelty_results = self.evaluate_novelty_detection(checkpoint_path)
+            except Exception as e:
+                self.logger.warning(f"Novelty detection evaluation failed: {e}")
+                self.logger.warning("Continuing with classification results only...")
+        else:
+            self.logger.info("\n[2/2] Novelty detection disabled in configuration")
+
+        # Compile comprehensive results
+        comprehensive_results = {
+            "classification": classification_results,
+            "novelty_detection": novelty_results,
+            "checkpoint": checkpoint_path,
+        }
+
+        # Print summary
+        self._print_comprehensive_summary(comprehensive_results)
+
+        return comprehensive_results
+
+    def _print_comprehensive_summary(self, results: Dict[str, Any]):
+        """Print comprehensive evaluation summary"""
+        print("\n" + "=" * 70)
+        print("📋 COMPREHENSIVE EVALUATION SUMMARY")
+        print("=" * 70)
+
+        # Classification summary
+        if results["classification"]:
+            cls_results = results["classification"]
+            print("\n✅ Known Label Classification:")
+            if "overall" in cls_results:
+                print(
+                    f"   Subset Accuracy: {cls_results['overall']['subset_accuracy']:.4f}"
+                )
+                print(
+                    f"   Hamming Accuracy: {cls_results['overall']['hamming_accuracy']:.4f}"
+                )
+                print(f"   F1-Score: {cls_results['overall']['f1_score']:.4f}")
+            if "auc_metrics" in cls_results and cls_results["auc_metrics"]:
+                print(f"   Macro AUC: {cls_results['auc_metrics']['macro_auc']:.4f}")
+
+        # Novelty detection summary
+        if results["novelty_detection"]:
+            nov_results = results["novelty_detection"]
+            print("\n🔍 Novelty Detection:")
+            print(f"   AUROC: {nov_results['auroc']:.4f}")
+            print(f"   Detection Accuracy: {nov_results['detection_accuracy']:.4f}")
+            print(f"   F1-Score: {nov_results['f1_score']:.4f}")
+
+        print("\n" + "=" * 70)
+        print("✅ Comprehensive evaluation completed successfully!")
+        print("=" * 70)
+
     def evaluate(self, checkpoint_path: Optional[str] = None) -> Dict[str, Any]:
-        """Evaluate trained model"""
+        """Evaluate trained model on known labels (standard classification)"""
         if checkpoint_path is None:
             checkpoint_path = self.config.get("checkpoints.evaluation_checkpoint")
 
@@ -815,9 +1093,9 @@ def main():
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["train", "eval"],
+        choices=["train", "eval", "eval_novelty", "eval_comprehensive"],
         default="train",
-        help="Mode: train or eval",
+        help="Mode: train, eval (known labels), eval_novelty (unknown detection), or eval_comprehensive (both)",
     )
     parser.add_argument("--checkpoint", type=str, help="Checkpoint path for evaluation")
 
@@ -834,9 +1112,19 @@ def main():
         print(f"Total training time: {results['total_training_time']:.2f} seconds")
 
     elif args.mode == "eval":
-        # Evaluation mode
+        # Evaluation mode - known labels only
         results = trainer.evaluate(args.checkpoint)
         print(f"✅ Evaluation completed successfully")
+
+    elif args.mode == "eval_novelty":
+        # Novelty detection evaluation mode
+        results = trainer.evaluate_novelty_detection(args.checkpoint)
+        print(f"✅ Novelty detection evaluation completed successfully")
+
+    elif args.mode == "eval_comprehensive":
+        # Comprehensive evaluation mode - both known and novelty
+        results = trainer.evaluate_comprehensive(args.checkpoint)
+        print(f"✅ Comprehensive evaluation completed successfully")
 
 
 if __name__ == "__main__":
