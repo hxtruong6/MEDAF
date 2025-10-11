@@ -87,3 +87,47 @@ Overall Performance:
    🔶 Model shows good improvement with optimal thresholds
    📈 Consider: expert configuration tuning, advanced loss functions
 ✅ Evaluation completed successfully
+
+--------------------- 30 epoch ---------------------
+📊 Overall Performance:
+   Subset Accuracy:  0.2497 (24.97%)
+   Hamming Accuracy: 0.8071 (80.71%)
+   Precision:        0.2483
+   Recall:           0.4398
+   F1-Score:         0.3099
+   Average Loss:     0.3994
+
+🏷️  Per-Class Performance (Optimal Thresholds):
+   Class           Threshold  Precision  Recall     F1-Score  
+   -----------------------------------------------------------------
+
+   Atelectasis     0.550      0.2439     0.5702     0.3417
+   Cardiomegaly    0.750      0.3266     0.3477     0.3368
+   Effusion        0.700      0.3839     0.6473     0.4820
+   Infiltration    0.500      0.3392     0.5848     0.4293
+   Mass            0.250      0.2245     0.3520     0.2741
+   Nodule          0.400      0.1781     0.2335     0.2021
+   Pneumonia       0.050      0.0326     0.2009     0.0561
+   Pneumothorax    0.150      0.2577     0.5822     0.3572
+
+🏆 Best Class:  Effusion (F1=0.4820)
+📉 Worst Class: Pneumonia (F1=0.0561)
+
+📈 AUC Performance Metrics:
+   Macro AUC:    0.7266
+   Micro AUC:    0.7911
+   Weighted AUC: 0.7254
+   Valid Classes: 8/8
+
+🏷️  Per-Class AUC Scores:
+   Class           AUC Score  Performance
+   ---------------------------------------------
+
+   Atelectasis     0.7204     Fair
+   Cardiomegaly    0.8488     Good
+   Effusion        0.7911     Fair
+   Infiltration    0.6498     Poor
+   Mass            0.7401     Fair
+   Nodule          0.6780     Poor
+   Pneumonia       0.6026     Poor
+   Pneumothorax    0.7822     Fair

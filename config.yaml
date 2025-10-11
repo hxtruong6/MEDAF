@@ -77,7 +77,7 @@ checkpoints:
   resume_from: "/home/s2320437/WORK/aidan-medaf/checkpoints/medaf_phase1/medaf_phase1_chestxray_epoch_29_1759624078.pt"
 
   # Evaluation
-  evaluation_checkpoint: "/home/s2320437/WORK/aidan-medaf/checkpoints/medaf_phase1/medaf_epoch_9_1759918531.pt"
+  evaluation_checkpoint: "checkpoints/result2_bce_stragegy_1/medaf_epoch_19_1760109349.pt"
 
 # Logging Configuration
 logging:
