@@ -2,7 +2,24 @@
 
 ## Overview
 
-This guide explains how to use the novelty detection functionality that has been added to your MEDAF implementation. The system can detect unknown/novel samples in multi-label classification settings using a hybrid scoring mechanism.
+Your MEDAF model can now detect unknown/novel samples in addition to classifying known labels. This guide covers everything you need to use novelty detection in your research.
+
+**Quick Start:**
+
+```bash
+# Comprehensive evaluation (known + novelty detection)
+python medaf_trainer.py --mode eval_comprehensive --checkpoint <path>
+```
+
+## Known vs Unknown Labels
+
+**Known Labels (8 classes - trained):**
+
+- Atelectasis, Cardiomegaly, Effusion, Infiltration, Mass, Nodule, Pneumonia, Pneumothorax
+
+**Unknown Labels (6 classes - novelty detection):**
+
+- Consolidation, Edema, Emphysema, Fibrosis, Pleural_Thickening, Hernia
 
 ## Key Components
 
@@ -113,208 +130,144 @@ detector = model.calibrate_novelty_detector(val_loader, device, fpr_target=0.05)
 2. Set threshold at target FPR (e.g., 5th percentile for 5% FPR)
 3. This ensures most known samples are accepted while unknowns are rejected
 
-## Usage Examples
+## Usage with Trainer (Recommended)
 
-### Basic Usage
+### Three Evaluation Modes
+
+```bash
+# Mode 1: Standard evaluation (known labels only)
+python medaf_trainer.py --mode eval --checkpoint <path>
+
+# Mode 2: Novelty detection only
+python medaf_trainer.py --mode eval_novelty --checkpoint <path>
+
+# Mode 3: Comprehensive (both) - RECOMMENDED
+python medaf_trainer.py --mode eval_comprehensive --checkpoint <path>
+```
+
+### Programmatic Usage
 
 ```python
-import torch
+from medaf_trainer import MEDAFTrainer
+
+# Create trainer
+trainer = MEDAFTrainer("config.yaml")
+
+# Comprehensive evaluation
+results = trainer.evaluate_comprehensive(checkpoint_path="path/to/checkpoint.pt")
+
+# Access results
+classification = results['classification']
+novelty = results['novelty_detection']
+
+print(f"Classification F1: {classification['overall']['f1_score']:.4f}")
+print(f"Novelty AUROC: {novelty['auroc']:.4f}")
+```
+
+## Low-Level API Usage
+
+For advanced users who need fine-grained control:
+
+```python
 from core.multilabel_net import MultiLabelMEDAF
 from core.multilabel_novelty_detection import MultiLabelNoveltyDetector
 
-# Load your trained model
+# Load model
 model = MultiLabelMEDAF(args)
 model.load_state_dict(checkpoint["state_dict"])
 model.to(device)
 
-# Create and calibrate detector
+# Calibrate detector
 detector = MultiLabelNoveltyDetector(gamma=1.0, temperature=1.0)
 detector.calibrate_threshold(model, val_loader, device, fpr_target=0.05)
 
-# Detect novelty in test samples
+# Detect novelty
 novelty_results = model.detect_novelty(inputs, novelty_detector=detector)
-
-# Access results
-is_novel = novelty_results["is_novel"]  # Boolean tensor [B]
-novelty_scores = novelty_results["novelty_scores"]  # Hybrid scores [B]
-novelty_types = novelty_results["novelty_types"]  # List of type strings
-predictions = novelty_results["predictions"]  # Binary predictions [B, num_classes]
+is_novel = novelty_results["is_novel"]
+novelty_scores = novelty_results["novelty_scores"]
 ```
 
-### Complete Workflow
+## Configuration
 
-```python
-# 1. Load model
-model = MultiLabelMEDAF(args)
-model.load_state_dict(checkpoint["state_dict"])
-model.to(device)
+Add to your `config.yaml`:
 
-# 2. Calibrate detector
-detector = model.calibrate_novelty_detector(val_loader, device, fpr_target=0.05)
-
-# 3. Detect novelty
-for inputs, targets in test_loader:
-    inputs = inputs.to(device)
-    
-    novelty_results = model.detect_novelty(inputs, novelty_detector=detector)
-    
-    is_novel = novelty_results["is_novel"]
-    novelty_scores = novelty_results["novelty_scores"]
-    novelty_types = novelty_results["novelty_types"]
-    
-    # Process results
-    for i in range(len(inputs)):
-        if is_novel[i]:
-            print(f"Sample {i} is novel: {novelty_types[i]}")
-            print(f"Novelty score: {novelty_scores[i].item():.4f}")
-        else:
-            print(f"Sample {i} is known")
+```yaml
+novelty_detection:
+  enabled: true          # Enable novelty detection
+  gamma: 1.0             # Feature score weight
+  temperature: 1.0       # Energy temperature
+  fpr_target: 0.05      # 5% false positive rate
+  max_unknown_samples: null  # null = use all unknown samples
 ```
 
-### Evaluation
+## Metrics
 
-```python
-# Evaluate novelty detection performance
-results = model.evaluate_novelty_detection(
-    known_loader, unknown_loader, device, detector
-)
+### Novelty Detection Metrics
 
-print(f"AUROC: {results['auroc']:.4f}")
-print(f"Detection Accuracy: {results['detection_accuracy']:.4f}")
-print(f"Precision: {results['precision']:.4f}")
-print(f"Recall: {results['recall']:.4f}")
-print(f"F1-Score: {results['f1_score']:.4f}")
-```
+| Metric | Description | Good Value |
+|--------|-------------|------------|
+| **AUROC** | Ability to separate known/unknown | > 0.80 |
+| **Detection Accuracy** | % correctly classified | > 0.75 |
+| **Precision** | Of flagged unknowns, % correct | > 0.70 |
+| **Recall** | Of true unknowns, % detected | > 0.70 |
+| **F1-Score** | Balanced performance | > 0.70 |
 
-## File Structure
+## Parameter Tuning
 
-```
-aidan-medaf/
-├── core/
-│   ├── multilabel_novelty_detection.py  # Novelty detection implementation
-│   ├── multilabel_net.py                # Enhanced MEDAF model
-│   └── ...
-├── example_novelty_detection.py          # Complete workflow example
-├── test_novelty_detection.py            # Simple test script
-└── NOVELTY_DETECTION_GUIDE.md           # This guide
-```
+### When to Adjust `gamma` (default: 1.0)
 
-## Key Features
+**Increase (e.g., 2.0):**
 
-### 1. Robust Detection
+- More weight on visual features (CAM)
+- Use when logit confidence is unreliable
 
-- Combines logit confidence and feature diversity
-- Handles different types of multi-label novelty
-- Calibrated thresholds for reliable detection
+**Decrease (e.g., 0.5):**
 
-### 2. Easy Integration
+- More weight on prediction confidence
+- Use when CAM features are noisy
 
-- Seamlessly integrates with existing MEDAF model
-- Simple API for novelty detection
-- Comprehensive evaluation metrics
+### When to Adjust `temperature` (default: 1.0)
 
-### 3. Flexible Configuration
+**Decrease (e.g., 0.5):**
 
-- Adjustable gamma and temperature parameters
-- Configurable FPR targets for calibration
-- Support for different novelty types
+- Sharper score separation
+- Use when scores are too similar
 
-## Parameters
+**Increase (e.g., 2.0):**
 
-### MultiLabelNoveltyDetector
+- Smoother score distribution
+- Use when separation is too aggressive
 
-- `gamma`: Weight for feature-based score (default: 1.0)
-- `temperature`: Temperature for logit-based energy (default: 1.0)
+### When to Adjust `fpr_target` (default: 0.05)
 
-### Calibration
-
-- `fpr_target`: Target false positive rate (default: 0.05 for 5% FPR)
-- `val_loader`: Validation data loader (known samples only)
-
-### Detection
-
-- `threshold`: Prediction threshold for binary classification (default: 0.5)
-- `novelty_detector`: Pre-calibrated detector instance
-
-## Best Practices
-
-### 1. Calibration
-
-- Always calibrate on validation data containing only known samples
-- Use appropriate FPR target (5-10% is common)
-- Ensure sufficient validation data for reliable calibration
-
-### 2. Parameter Tuning
-
-- Start with default parameters (gamma=1.0, temperature=1.0)
-- Adjust gamma to balance logit and feature components
-- Use temperature to control logit-based energy sensitivity
-
-### 3. Evaluation
-
-- Use separate known and unknown test sets
-- Report AUROC, precision, recall, and F1-score
-- Analyze different novelty types separately
-
-### 4. Interpretation
-
-- Higher novelty scores indicate more "known-like" samples
-- Lower scores indicate more "novel/unknown" samples
-- Mixed novelty is most challenging to detect
+- **Lower (0.01)**: Fewer false alarms, stricter detection
+- **Higher (0.10)**: More sensitive, catches more unknowns
 
 ## Troubleshooting
 
-### Common Issues
+**Low AUROC (< 0.7):**
 
-1. **"Detector not calibrated" warning**
-   - Solution: Call `calibrate_threshold()` before detection
+- Train model longer on known labels
+- Adjust gamma or temperature parameters
+- Check if unknown labels are too similar to known ones
 
-2. **Low detection performance**
-   - Check calibration data quality
-   - Adjust gamma and temperature parameters
-   - Ensure sufficient training data
+**"No samples found for novelty_type":**
 
-3. **Memory issues**
-   - Reduce batch size
-   - Use gradient checkpointing
-   - Clear GPU cache between operations
+- Verify test CSV contains unknown labels
+- Check CSV format matches expected structure
 
-### Performance Tips
+**Memory issues:**
 
-1. **Batch Processing**
-   - Process samples in batches for efficiency
-   - Use appropriate batch sizes for your GPU memory
+- Reduce batch_size in config
+- Set max_unknown_samples in config
 
-2. **Model Optimization**
-   - Use model.eval() for inference
-   - Disable gradient computation with torch.no_grad()
+## Summary
 
-3. **Data Loading**
-   - Use multiple workers for data loading
-   - Pin memory for GPU acceleration
+Your MEDAF model now supports:
 
-## Future Enhancements
+- Classification of 8 known labels
+- Detection of 6 unknown labels  
+- Three evaluation modes (eval, eval_novelty, eval_comprehensive)
+- Configurable detection parameters
 
-### 1. Advanced Novelty Types
-
-- Combinatorial novelty detection
-- Label dependency modeling
-- Graph-based novelty detection
-
-### 2. Uncertainty Quantification
-
-- Evidential deep learning integration
-- Bayesian uncertainty estimation
-- Confidence interval computation
-
-### 3. Adaptive Thresholds
-
-- Dynamic threshold adjustment
-- Per-class threshold calibration
-- Online learning capabilities
-
-## Conclusion
-
-The multi-label novelty detection system provides a robust framework for detecting unknown samples in your MEDAF implementation. By combining logit-based and feature-based scoring, it can handle the complexity of multi-label novelty detection while maintaining high performance and reliability.
-
-For more details, refer to the implementation files and example scripts provided in your codebase.
+Use `python medaf_trainer.py --mode eval_comprehensive --checkpoint <path>` to evaluate both capabilities.

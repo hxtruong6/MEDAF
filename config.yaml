@@ -29,7 +29,7 @@ training:
   loss:
     type: "bce" # focal, bce, weighted_bce
     # type: "focal"
-    focal_alpha: 1.0
+    focal_alpha: 0.25  # FIXED: Use 0.25 instead of 1.0 for multi-label classification
     focal_gamma: 2.0
     class_weighting:
       enabled: true

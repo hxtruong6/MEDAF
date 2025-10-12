@@ -219,7 +219,7 @@ class MEDAFTrainer:
 
         # Create validation split
         val_ratio = self.config.get("training.val_ratio", 0.1)
-        use_stratified_split = self.config.get("training.use_stratified_split", True)
+        use_stratified_split = self.config.get("training.use_stratified_split", False)
 
         if use_stratified_split:
             # Use stratified split to prevent dataset imbalance
@@ -753,9 +753,7 @@ class MEDAFTrainer:
         detector = self._calibrate_novelty_detector(model, val_loader)
 
         # Create unknown data loader
-        max_unknown_samples = int(
-            self.config.get("novelty_detection.max_unknown_samples")
-        )
+        max_unknown_samples = self.config.get("novelty_detection.max_unknown_samples")
         unknown_loader = self._create_unknown_data_loader(
             novelty_type="all", max_samples=max_unknown_samples
         )

@@ -4,6 +4,7 @@ globs:
 alwaysApply: true
 ---
 
+- When writing code, try to use the existing code as much as possible.
 - Do not create unneccesary files.
 - Try to adapt with the existing code.
 - If you are not sure about the code, ask me to for clarification before making any changes.

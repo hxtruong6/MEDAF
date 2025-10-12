@@ -23,7 +23,7 @@ class FocalLoss(nn.Module):
 
     def __init__(
         self,
-        alpha: float = 1.0,
+        alpha: float = 0.25,  # FIXED: Changed default from 1.0 to 0.25 for multi-label
         gamma: float = 2.0,
         reduction: str = "mean",
         pos_weight: Optional[torch.Tensor] = None,
@@ -33,6 +33,15 @@ class FocalLoss(nn.Module):
         self.gamma = gamma
         self.reduction = reduction
         self.pos_weight = pos_weight
+        
+        # Warning for problematic alpha values in multi-label classification
+        if alpha == 1.0:
+            import warnings
+            warnings.warn(
+                "Focal Loss with alpha=1.0 causes zero loss for negative samples in multi-label classification. "
+                "Consider using alpha=0.25 or alpha=0.5 for better performance.",
+                UserWarning
+            )
 
     def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """
@@ -53,14 +62,15 @@ class FocalLoss(nn.Module):
             inputs, targets, pos_weight=self.pos_weight, reduction="none"
         )
 
-        # Calculate p_t
+        # Calculate p_t (probability of true class)
         p_t = p * targets + (1 - p) * (1 - targets)
 
-        # Calculate alpha_t
+        # Calculate alpha_t - FIXED: Use alpha for positive class, (1-alpha) for negative class
+        # This ensures both positive and negative samples contribute to the loss
         alpha_t = self.alpha * targets + (1 - self.alpha) * (1 - targets)
 
-        # Calculate focal weight
-        focal_weight = alpha_t * (1 - p_t) ** self.gamma
+        # Calculate focal weight: alpha_t * (1 - p_t)^gamma
+        focal_weight = alpha_t * torch.pow(1 - p_t, self.gamma)
 
         # Apply focal weight to BCE loss
         focal_loss = focal_weight * bce_loss
