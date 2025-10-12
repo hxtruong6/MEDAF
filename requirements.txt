@@ -1,5 +1,40 @@
-easydict
-numpy
-Pillow
-PyYAML
-scikit_learn
+# Core PyTorch Lightning
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Lightning Extensions
+lightning>=2.5.5
+lightning-bolts>=0.6.0
+lightning-utilities>=0.8.0
+
+# Logging and Monitoring
+tensorboard>=2.13.0
+wandb>=0.15.0  # Optional: for Weights & Biases integration
+
+# Data Processing
+numpy>=1.21.0
+pandas>=1.3.0
+scikit-learn>=1.0.0
+Pillow>=8.3.0
+
+# Visualization
+matplotlib>=3.5.0
+seaborn>=0.11.0
+
+# Configuration
+PyYAML>=6.0
+omegaconf>=2.2.0  # Optional: for advanced configuration management
+
+# Utilities
+tqdm>=4.62.0
+rich>=12.0.0  # For better progress bars and logging
+
+# Development and Testing
+pytest>=7.0.0
+black>=22.0.0
+flake8>=4.0.0
+
+# Optional: For advanced features
+hydra-core>=1.2.0  # For configuration management
+optuna>=3.0.0      # For hyperparameter optimization
+neptune-client>=0.16.0  # For experiment tracking

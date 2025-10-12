@@ -164,17 +164,42 @@ def optimize_thresholds_per_class(
 
     print(f"   Total validation samples: {all_probs.shape[0]}")
 
+    # Safety check: ensure we don't exceed the actual number of classes
+    actual_num_classes = all_probs.shape[1]
+    if num_classes > actual_num_classes:
+        print(
+            f"⚠️ Warning: Requested {num_classes} classes but model only outputs {actual_num_classes}"
+        )
+        print(f"   Adjusting to use {actual_num_classes} classes")
+        num_classes = actual_num_classes
+        class_names = (
+            class_names[:num_classes]
+            if len(class_names) > num_classes
+            else class_names
+            + [f"Class_{i}" for i in range(len(class_names), num_classes)]
+        )
+
     # Find optimal threshold for each class
     optimal_thresholds = []
     threshold_metrics = {}
 
     print(f"\n🔍 Per-class threshold optimization:")
     print(
+        f"   Model outputs: {actual_num_classes} classes, Processing: {num_classes} classes"
+    )
+    print(
         f"   {'Class':<15} {'Optimal':<8} {'F1':<8} {'Precision':<10} {'Recall':<8} {'Samples':<8}"
     )
     print("   " + "-" * 70)
 
     for class_idx in range(num_classes):
+        if class_idx >= all_probs.shape[1]:
+            print(
+                f"⚠️ Warning: Skipping class {class_idx} - model doesn't output this class"
+            )
+            optimal_thresholds.append(0.5)
+            continue
+
         class_probs = all_probs[:, class_idx]
         class_targets = all_targets[:, class_idx]
 
@@ -455,8 +480,8 @@ def calculate_multilabel_auc(
             probs = predictions
 
         # Convert to numpy
-        probs_np = probs.cpu().numpy()
-        targets_np = targets.cpu().numpy()
+        probs_np = probs.cpu().float().numpy()
+        targets_np = targets.cpu().float().numpy()
 
         num_classes = probs_np.shape[1]
 
@@ -531,8 +556,8 @@ def calculate_roc_curves(
             probs = predictions
 
         # Convert to numpy
-        probs_np = probs.cpu().numpy()
-        targets_np = targets.cpu().numpy()
+        probs_np = probs.cpu().float().numpy()
+        targets_np = targets.cpu().float().numpy()
 
         num_classes = probs_np.shape[1]
         roc_curves_data = {}

@@ -1,0 +1,205 @@
+# MEDAF Multi-Label Classification Configuration - Lightning Version
+
+# Dataset Configuration
+data:
+  source: "chestxray"
+  train_csv: "datasets/data/NIH/Data_Entry_2017.csv"
+  train_list: "datasets/data/NIH/train_val_list.txt"
+  test_list: "datasets/data/NIH/test_list.txt"
+  image_root: "datasets/data/NIH/images-224"
+  img_size: 224
+  max_samples: null # Set to integer for quick experiments, null for full dataset
+
+# Training Configuration
+training:
+  batch_size: 32
+  num_epochs: 50
+  learning_rate: 1e-4
+  weight_decay: 1e-4 # For AdamW optimizer
+  val_ratio: 0.1
+  num_workers: 1
+
+  # Optimizer Configuration
+  optimizer:
+    type: "adamw" # adamw, adam, sgd
+    betas: [0.9, 0.999]
+    eps: 1e-8
+    amsgrad: false
+
+  # Learning Rate Scheduler Configuration
+  scheduler:
+    enabled: true
+    type: "cosine" # cosine, step, plateau
+    # For cosine scheduler
+    eta_min: 1e-6
+    # For step scheduler
+    step_size: 10
+    gamma: 0.1
+    # For plateau scheduler
+    factor: 0.5
+    patience: 5
+    min_lr: 1e-6
+
+  # Loss Configuration
+  loss:
+    type: "bce" # focal, bce, weighted_bce
+    # type: "focal"
+    focal_alpha: 0.25 # FIXED: Use 0.25 instead of 1.0 for multi-label classification
+    focal_gamma: 2.0
+    class_weighting:
+      enabled: true
+      method: "inverse_freq" # inverse_freq, effective_num, focal
+
+  # Enhanced Training Features
+  enhanced_training: true
+  use_optimal_thresholds: true
+  use_stratified_split: true # Use stratified split to prevent dataset imbalance
+  calculate_train_auc: false # Calculate AUC for training data (expensive, set to true for detailed analysis)
+
+  # Evaluation Features
+  calculate_eval_auc: true # Calculate AUC scores during evaluation (recommended)
+  create_roc_plots: true # Create ROC curve plots during evaluation
+
+  # Early Stopping Configuration
+  early_stopping:
+    patience: 15
+    min_delta: 1e-5
+    monitor: "val/loss"
+    mode: "min"
+
+# Model Configuration
+model:
+  backbone: "resnet18"
+  num_classes: 14
+  gate_temp: 100
+
+  # Loss weights: [expert_weight, gate_weight, diversity_weight]
+  loss_weights: [0.7, 1.0, 0.01]
+
+  # Keys for tracking
+  loss_keys: ["b1", "b2", "b3", "gate", "divAttn", "total"]
+  acc_keys: ["acc1", "acc2", "acc3", "accGate"]
+
+# Checkpoint Configuration
+checkpoints:
+  dir: "checkpoints/medaf_lightning"
+  filename: "medaf_lightning_chestxray.pt"
+  save_every: 10 # Save checkpoint every N epochs
+  keep_best: true
+
+  # Resume Training
+  # resume_from: null # Path to checkpoint file
+  # resume_from: "/home/s2320437/WORK/aidan-medaf/checkpoints/medaf_lightning/medaf-lightning-epoch=29-val_loss=0.1234.ckpt"
+
+  # Evaluation
+  evaluation_checkpoint: "checkpoints/medaf_lightning/best_model.ckpt"
+
+# Logging Configuration
+logging:
+  level: "INFO" # DEBUG, INFO, WARNING, ERROR
+  save_metrics: true
+  metrics_dir: "logs/lightning"
+
+  # Training metrics to log
+  metrics:
+    - "epoch"
+    - "train_loss"
+    - "val_loss"
+    - "train_acc"
+    - "val_acc"
+    - "learning_rate"
+    - "epoch_time"
+
+  # Visualization
+  create_plots: true
+  plot_types: ["loss", "accuracy", "learning_rate"]
+
+# Hardware Configuration
+hardware:
+  device: "auto" # auto, cuda, cpu, mps
+  mixed_precision: false # Enable automatic mixed precision training
+  memory_fraction: 0.9
+  pin_memory: true
+
+# Lightning-specific Configuration
+lightning:
+  # Trainer Configuration
+  trainer:
+    max_epochs: 50
+    precision: 32 # 16 for mixed precision, 32 for full precision
+    deterministic: true # For reproducibility
+    benchmark: false # Disable for reproducibility
+    log_every_n_steps: 50
+    val_check_interval: 1.0 # Validate every epoch
+
+  # Callback Configuration
+  callbacks:
+    # Metrics callback
+    metrics:
+      log_every_n_epochs: 5
+      save_plots: true
+      plots_dir: "plots"
+
+    # Threshold optimization callback
+    threshold_optimization:
+      optimize_every_n_epochs: 10
+      save_optimal_thresholds: true
+
+    # ROC curve callback
+    roc_curves:
+      create_every_n_epochs: 10
+      save_plots: true
+      plots_dir: "plots"
+
+    # Novelty detection callback
+    novelty_detection:
+      evaluate_every_n_epochs: 20
+
+  # Logger Configuration
+  loggers:
+    tensorboard:
+      enabled: true
+      save_dir: "logs/lightning"
+      name: "medaf_lightning"
+
+    csv:
+      enabled: true
+      save_dir: "logs/lightning"
+      name: "medaf_lightning"
+
+    wandb:
+      enabled: false # Set to true to enable Weights & Biases logging
+      project: "medaf-multilabel"
+      name: "medaf_lightning_run"
+
+# Class Names (for ChestX-ray14)
+class_names:
+  - "Atelectasis"
+  - "Cardiomegaly"
+  - "Effusion"
+  - "Infiltration"
+  - "Mass"
+  - "Nodule"
+  - "Pneumonia"
+  - "Pneumothorax" # first 8 classes
+  - "Consolidation"
+  - "Edema"
+  - "Emphysema"
+  - "Fibrosis"
+  - "Pleural_Thickening"
+  - "Hernia" # last 6 classes
+
+# Paths
+paths:
+  current_dir: "aidan-medaf"
+
+# Novelty Detection Configuration
+novelty_detection:
+  enabled: true # Enable novelty detection evaluation
+  gamma: 1.0 # Weight for feature-based score in hybrid computation
+  temperature: 1.0 # Temperature for logit-based energy computation
+  fpr_target: 0.05 # Target false positive rate for threshold calibration (5%)
+  max_unknown_samples: null # Maximum unknown samples for evaluation (null = all)
+
+# Reproducibility
+seed: 42

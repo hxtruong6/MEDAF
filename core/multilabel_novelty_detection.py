@@ -373,13 +373,15 @@ def evaluate_novelty_detection(
     auroc = roc_auc_score(all_labels, all_scores)
 
     # Compute detection accuracy using calibrated threshold
-    is_novel_pred = np.array(all_scores) < detector.threshold
-    detection_accuracy = np.mean(is_novel_pred == np.array(all_labels))
+    is_novel_pred = np.array(all_scores, dtype=np.float32) < detector.threshold
+    detection_accuracy = np.mean(
+        is_novel_pred == np.array(all_labels, dtype=np.float32)
+    )
 
     # Compute precision and recall
-    tp = np.sum((is_novel_pred == 1) & (np.array(all_labels) == 1))
-    fp = np.sum((is_novel_pred == 1) & (np.array(all_labels) == 0))
-    fn = np.sum((is_novel_pred == 0) & (np.array(all_labels) == 1))
+    tp = np.sum((is_novel_pred == 1) & (np.array(all_labels, dtype=np.float32) == 1))
+    fp = np.sum((is_novel_pred == 1) & (np.array(all_labels, dtype=np.float32) == 0))
+    fn = np.sum((is_novel_pred == 0) & (np.array(all_labels, dtype=np.float32) == 1))
 
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0

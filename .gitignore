@@ -1,5 +1,5 @@
 datasets/data/
-
+checkpoints/medaf_lightning
 logs/
 ckpt/
 # Byte-compiled / optimized / DLL files

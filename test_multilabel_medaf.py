@@ -368,6 +368,130 @@ class ChestXrayUnknownDataset(data.Dataset):
             return "no_labels"
 
 
+# All 14 ChestX-ray14 labels for full dataset training
+ALL_CHESTXRAY_LABELS = [
+    "Atelectasis",
+    "Cardiomegaly", 
+    "Effusion",
+    "Infiltration",
+    "Mass",
+    "Nodule",
+    "Pneumonia",
+    "Pneumothorax",
+    "Consolidation",
+    "Edema",
+    "Emphysema",
+    "Fibrosis",
+    "Pleural_Thickening",
+    "Hernia",
+]
+
+
+class ChestXrayFullDataset(data.Dataset):
+    """
+    Dataset class for full ChestX-ray14 with all 14 labels.
+    Handles the original CSV format and train/test lists.
+    """
+
+    def __init__(
+        self,
+        csv_path: str,
+        image_root: str,
+        img_size: int = 224,
+        max_samples: int = None,
+        transform=None,
+        train_list: str = None,
+        test_list: str = None,
+    ):
+        self.csv_path = Path(csv_path)
+        self.image_root = Path(image_root)
+        self.img_size = img_size
+        self.train_list = train_list
+        self.test_list = test_list
+
+        if not self.csv_path.exists():
+            raise FileNotFoundError(f"ChestX-ray CSV not found: {self.csv_path}")
+        if not self.image_root.exists():
+            raise FileNotFoundError(f"ChestX-ray image directory not found: {self.image_root}")
+
+        if transform is None:
+            self.transform = transforms.Compose([
+                transforms.Resize((img_size, img_size)),
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406],
+                    std=[0.229, 0.224, 0.225],
+                ),
+            ])
+        else:
+            self.transform = transform
+
+        # Use all 14 labels
+        self.label_to_idx = {label: idx for idx, label in enumerate(ALL_CHESTXRAY_LABELS)}
+        self.num_classes = len(self.label_to_idx)
+
+        # Load CSV data
+        df = pd.read_csv(self.csv_path)
+        
+        # Filter by train/test list if provided
+        if train_list and Path(train_list).exists():
+            with open(train_list, 'r') as f:
+                train_images = set(line.strip() for line in f)
+            df = df[df['Image Index'].isin(train_images)]
+            print(f"Filtered to {len(df)} training images")
+        elif test_list and Path(test_list).exists():
+            with open(test_list, 'r') as f:
+                test_images = set(line.strip() for line in f)
+            df = df[df['Image Index'].isin(test_images)]
+            print(f"Filtered to {len(df)} test images")
+
+        # Limit samples if specified
+        if max_samples is not None and max_samples < len(df):
+            df = df.sample(n=max_samples, random_state=42).reset_index(drop=True)
+        else:
+            df = df.reset_index(drop=True)
+
+        self.records = df.to_dict("records")
+        print(f"Loaded {len(self.records)} samples with {self.num_classes} classes")
+
+    @staticmethod
+    def _parse_label_list(raw_value):
+        """Parse label list from the Finding Labels column"""
+        if pd.isna(raw_value):
+            return []
+        if isinstance(raw_value, str):
+            raw_value = raw_value.strip()
+            if not raw_value or raw_value == "No Finding":
+                return []
+            # Split by | and clean up
+            return [item.strip() for item in raw_value.split("|") if item.strip()]
+        return []
+
+    def __len__(self):
+        return len(self.records)
+
+    def __getitem__(self, idx):
+        record = self.records[idx]
+        image_path = self.image_root / record["Image Index"]
+        
+        if not image_path.exists():
+            raise FileNotFoundError(f"Missing image: {image_path}")
+
+        # Load and transform image
+        image = Image.open(image_path).convert("RGB")
+        image = self.transform(image)
+
+        # Create multi-hot label vector
+        labels = torch.zeros(self.num_classes, dtype=torch.float32)
+        finding_labels = self._parse_label_list(record.get("Finding Labels", ""))
+        
+        for label in finding_labels:
+            if label in self.label_to_idx:
+                labels[self.label_to_idx[label]] = 1.0
+
+        return image, labels
+
+
 def test_model_forward():
     """Test model forward pass with synthetic data"""
     print("\n" + "=" * 50)
