@@ -288,13 +288,40 @@ class MEDAFDataModule(pl.LightningDataModule):
             novelty_type=novelty_type,
         )
 
+        def custom_collate_fn(batch):
+            """Custom collate function to handle 3-item returns from ChestXrayUnknownDataset"""
+            # Separate the batch into images, labels, and metadata
+            images = []
+            labels = []
+            metadata_list = []
+
+            for item in batch:
+                if len(item) == 3:
+                    image, label, metadata = item
+                    images.append(image)
+                    labels.append(label)
+                    metadata_list.append(metadata)
+                else:
+                    # Fallback for 2-item returns
+                    image, label = item
+                    images.append(image)
+                    labels.append(label)
+                    metadata_list.append({})
+
+            # Stack images and labels
+            images = torch.stack(images, dim=0)
+            labels = torch.stack(labels, dim=0)
+
+            return images, labels
+
         return data.DataLoader(
             unknown_dataset,
             batch_size=self.batch_size,
             shuffle=False,
-            num_workers=self.num_workers,
+            num_workers=0,  # Set to 0 to avoid multiprocessing issues with custom collate
             pin_memory=self.pin_memory and torch.cuda.is_available(),
-            persistent_workers=self.num_workers > 0,
+            persistent_workers=False,
+            collate_fn=custom_collate_fn,
         )
 
     def get_dataset_info(self) -> Dict[str, Any]:

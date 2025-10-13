@@ -4,6 +4,8 @@ import random
 import numpy as np
 import torch.nn as nn
 
+from datetime import datetime
+
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -901,3 +903,13 @@ splits_AUROC = {
         ],
     ],
 }
+
+
+def get_current_time() -> str:
+    # Get the current time
+    current_time = datetime.now().time()
+
+    # Format the current time to YYYY-MM-DD-HH_MM
+    formatted_current_time = current_time.strftime("%Y-%m-%d-%H_%M")
+    print(f"Current time in YYYY-MM-DD-HH_MM format: {formatted_current_time}")
+    return formatted_current_time

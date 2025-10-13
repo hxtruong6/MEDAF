@@ -131,3 +131,105 @@ Overall Performance:
    Nodule          0.6780     Poor
    Pneumonia       0.6026     Poor
    Pneumothorax    0.7822     Fair
+
+# Traning all labels
+
+Testing DataLoader 0: 100%|███████████████████████████████████████████████████████████████████| 800/800 [02:20<00:00,  5.71it/s]
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Runningstage.testing metric ┃        DataLoader 0         ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│    test/auc_Atelectasis     │     0.6836501359939575      │
+│    test/auc_Cardiomegaly    │     0.8152111172676086      │
+│   test/auc_Consolidation    │      0.681266725063324      │
+│       test/auc_Edema        │     0.7905856966972351      │
+│      test/auc_Effusion      │     0.7376695871353149      │
+│     test/auc_Emphysema      │     0.7509016990661621      │
+│      test/auc_Fibrosis      │     0.7406420707702637      │
+│       test/auc_Hernia       │     0.8283058404922485      │
+│    test/auc_Infiltration    │     0.6637631058692932      │
+│        test/auc_Mass        │     0.6427419185638428      │
+│       test/auc_Nodule       │     0.6350199580192566      │
+│ test/auc_Pleural_Thickening │     0.6808257699012756      │
+│     test/auc_Pneumonia      │     0.6391271948814392      │
+│    test/auc_Pneumothorax    │     0.7743315696716309      │
+│       test/macro_auc        │     0.7188601659683209      │
+│       test/micro_auc        │     0.7298349738121033      │
+│      test/weighted_auc      │     0.7037743330001831      │
+└─────────────────────────────┴─────────────────────────────┘
+2025-10-13 15:25:16 - core.lightning_trainer - INFO - Testing completed successfully
+2025-10-13 15:25:16 - __main__ - INFO - [2/2] Testing novelty detection...
+2025-10-13 15:25:16 - core.lightning_trainer - INFO - Evaluating novelty detection from checkpoint: checkpoints/medaf_lightning/medaf-lightning-epoch=10-val_loss=0.0000.ckpt
+/home/s2320437/miniconda3/envs/research_medaf_aidan/lib/python3.12/site-packages/lightning_fabric/utilities/cloud_io.py:51: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See <https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models> for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  return torch.load(f, map_location=map_location)  # type: ignore[arg-type]
+Filtered to 86524 training images
+Loaded 86524 samples with 14 classes
+Class weights calculated:
+  Class 0: 9.3968
+  Class 1: 49.6320
+  Class 2: 8.9823
+  Class 3: 5.3039
+  Class 4: 20.5652
+  Class 5: 17.4794
+  Class 6: 97.8223
+  Class 7: 31.8158
+  Class 8: 29.3831
+  Class 9: 62.0542
+  Class 10: 59.2258
+  Class 11: 68.0967
+  Class 12: 37.5314
+  Class 13: 588.9394
+Filtered to 25596 test images
+Loaded 25596 samples with 14 classes
+Loaded 13739 all samples for novelty detection
+Threshold calibrated: 1.2215 (FPR target: 5.0%)
+
+======================================================================
+🔍 NOVELTY DETECTION EVALUATION RESULTS
+======================================================================
+
+📊 Overall Novelty Detection Performance:
+   AUROC:              0.5353
+   Detection Accuracy: 0.6449 (64.49%)
+   Precision:          0.1299
+   Recall:             0.0029
+   F1-Score:           0.0057
+
+🎯 Detection Threshold: 1.2215
+   Known samples:   25596
+   Unknown samples: 13739
+
+💡 Performance Assessment: Needs Improvement ⚠️
+======================================================================
+
+2025-10-13 15:32:47 - __main__ - INFO - ✅ Comprehensive evaluation completed successfully!
+
+======================================================================
+📋 COMPREHENSIVE EVALUATION SUMMARY
+======================================================================
+
+✅ Standard Classification Results:
+  test/macro_auc: 0.7189
+  test/micro_auc: 0.7298
+  test/weighted_auc: 0.7038
+  test/auc_Atelectasis: 0.6837
+  test/auc_Cardiomegaly: 0.8152
+  test/auc_Effusion: 0.7377
+  test/auc_Infiltration: 0.6638
+  test/auc_Mass: 0.6427
+  test/auc_Nodule: 0.6350
+  test/auc_Pneumonia: 0.6391
+  test/auc_Pneumothorax: 0.7743
+  test/auc_Consolidation: 0.6813
+  test/auc_Edema: 0.7906
+  test/auc_Emphysema: 0.7509
+  test/auc_Fibrosis: 0.7406
+  test/auc_Pleural_Thickening: 0.6808
+  test/auc_Hernia: 0.8283
+
+🔍 Novelty Detection Results:
+  AUROC: 0.5353
+  Detection Accuracy: 0.6449
+  F1-Score: 0.0057
+======================================================================
+
+(research_medaf_aidan) s2320437@spcc-a100g05 ~/WORK/aidan-medaf ±main⚡ »

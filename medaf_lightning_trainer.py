@@ -38,9 +38,9 @@ def main():
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["train", "test", "eval_novelty", "eval_comprehensive"],
+        choices=["train", "test"],
         default="train",
-        help="Mode: train, test, eval_novelty, or eval_comprehensive",
+        help="Mode: train, test",
     )
 
     # Checkpoint path for evaluation
@@ -90,14 +90,19 @@ def main():
     if args.quick_test:
         logger.info("🚀 Running in quick test mode with limited data")
         trainer.config["data"]["max_samples"] = 100
-        trainer.config["training"]["num_epochs"] = 1
-        trainer.config["training"]["batch_size"] = 16
+        trainer.config["training"]["num_epochs"] = 4
+        trainer.config["training"]["batch_size"] = 32
 
     try:
         if args.mode == "train":
             # Training mode
-            logger.info("🚀 Starting MEDAF Lightning training...")
-            results = trainer.train()
+            if args.resume:
+                logger.info(f"🔄 Resuming training from checkpoint: {args.resume}")
+                # Use PyTorch Lightning's built-in resume functionality
+                results = trainer.train(ckpt_path=args.resume)
+            else:
+                logger.info("🚀 Starting MEDAF Lightning training...")
+                results = trainer.train()
 
             logger.info("✅ Training completed successfully!")
             logger.info(f"Best model: {results['best_model_path']}")
@@ -109,22 +114,22 @@ def main():
             for key, value in summary.items():
                 logger.info(f"  {key}: {value}")
 
+        # elif args.mode == "test":
+        #     # Test mode - standard classification evaluation
+        #     logger.info("🧪 Starting model testing...")
+        #     results = trainer.test(args.checkpoint)
+
+        #     logger.info("✅ Testing completed successfully!")
+        #     logger.info(f"Test results: {results['test_results']}")
+
+        # elif args.mode == "eval_novelty":
+        #     # Novelty detection evaluation mode
+        #     logger.info("🔍 Starting novelty detection evaluation...")
+        #     results = trainer.evaluate_novelty_detection(args.checkpoint)
+
+        #     logger.info("✅ Novelty detection evaluation completed successfully!")
+
         elif args.mode == "test":
-            # Test mode - standard classification evaluation
-            logger.info("🧪 Starting model testing...")
-            results = trainer.test(args.checkpoint)
-
-            logger.info("✅ Testing completed successfully!")
-            logger.info(f"Test results: {results['test_results']}")
-
-        elif args.mode == "eval_novelty":
-            # Novelty detection evaluation mode
-            logger.info("🔍 Starting novelty detection evaluation...")
-            results = trainer.evaluate_novelty_detection(args.checkpoint)
-
-            logger.info("✅ Novelty detection evaluation completed successfully!")
-
-        elif args.mode == "eval_comprehensive":
             # Comprehensive evaluation mode
             logger.info("📊 Starting comprehensive evaluation...")
 

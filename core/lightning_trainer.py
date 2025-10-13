@@ -13,6 +13,8 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor
 from pytorch_lightning.loggers import TensorBoardLogger, CSVLogger
 
+from misc.util import get_current_time
+
 from .lightning_module import MEDAFLightningModule
 from .lightning_datamodule import MEDAFDataModule
 from .lightning_callbacks import (
@@ -23,6 +25,8 @@ from .lightning_callbacks import (
     MEDAFModelCheckpointCallback,
 )
 from .config_manager import load_config
+
+torch.set_float32_matmul_precision("medium")
 
 
 class MEDAFLightningTrainer:
@@ -160,7 +164,7 @@ class MEDAFLightningTrainer:
             monitor=self.config.get("training.early_stopping.monitor", "val/loss"),
             mode=self.config.get("training.early_stopping.mode", "min"),
             patience=self.config.get("training.early_stopping.patience", 15),
-            min_delta=float(self.config.get("training.early_stopping.min_delta", 1e-5)),
+            min_delta=float(self.config.get("training.early_stopping.min_delta", 1e-6)),
             verbose=True,
         )
         callbacks.append(early_stopping)
@@ -170,7 +174,8 @@ class MEDAFLightningTrainer:
         callbacks.append(lr_monitor)
 
         # Model checkpointing
-        checkpoint_dir = Path(self.config.get("checkpoints.dir"))
+        current_time = get_current_time()
+        checkpoint_dir = Path(self.config.get("checkpoints.dir") + f"/{current_time}")
         checkpoint_callback = MEDAFModelCheckpointCallback(
             dirpath=str(checkpoint_dir),
             filename="medaf-lightning-{epoch:02d}-{val_loss:.4f}",
@@ -405,6 +410,10 @@ class MEDAFLightningTrainer:
                     f"Invalid checkpoint format: {list(checkpoint.keys())}"
                 )
 
+        # Ensure the model is on the correct device
+        self.lightning_module = self.lightning_module.to(self.device)
+        self.lightning_module.model.eval()
+
         # Test the model
         test_results = self.trainer.test(
             model=self.lightning_module,
@@ -464,6 +473,10 @@ class MEDAFLightningTrainer:
                     f"Invalid checkpoint format: {list(checkpoint.keys())}"
                 )
 
+        # Ensure the model is on the correct device
+        self.lightning_module = self.lightning_module.to(self.device)
+        self.lightning_module.model.eval()
+
         # Setup data module
         self.data_module.setup("fit")
         self.data_module.setup("test")
@@ -488,6 +501,10 @@ class MEDAFLightningTrainer:
 
         # Get validation loader for calibration
         val_loader = self.data_module.val_dataloader()
+
+        # Ensure model is on the correct device and in eval mode
+        self.lightning_module.model = self.lightning_module.model.to(self.device)
+        self.lightning_module.model.eval()
 
         # Calibrate threshold
         detector.calibrate_threshold(

@@ -66,16 +66,48 @@ class MEDAFLightningModule(pl.LightningModule):
 
     def setup(self, stage: Optional[str] = None):
         """Setup the module - called after moving to device"""
-        if stage == "fit" and self.criterion is None:
-            # Create loss function
+        self._ensure_criterion_initialized()
+
+    def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
+        """Called when loading from checkpoint"""
+        super().on_load_checkpoint(checkpoint)
+
+        # Restore pos_weight if available
+        if "pos_weight" in checkpoint and checkpoint["pos_weight"] is not None:
+            self.pos_weight = checkpoint["pos_weight"]
+            if hasattr(self, "device") and self.device is not None:
+                self.pos_weight = self.pos_weight.to(self.device)
+
+        # Ensure criterion is initialized after loading
+        self._ensure_criterion_initialized()
+
+        # Ensure model is on the correct device
+        self._ensure_model_initialized()
+
+    def _ensure_criterion_initialized(self):
+        """Ensure criterion is properly initialized"""
+        if self.criterion is None:
+            device = getattr(self, "device", torch.device("cpu"))
             self.criterion = LossFactory.create_loss(
                 loss_type=self.loss_config["type"],
                 num_classes=self.num_classes,
-                device=self.device,
+                device=device,
                 pos_weight=self.pos_weight,
                 focal_alpha=self.loss_config.get("focal_alpha", 0.25),
                 focal_gamma=self.loss_config.get("focal_gamma", 2.0),
             )
+
+    def _ensure_model_initialized(self):
+        """Ensure model is properly initialized"""
+        if self.model is None:
+            print("Warning: Model is None, this should not happen")
+            return False
+
+        # Ensure model is on the correct device
+        if hasattr(self, "device") and self.device is not None:
+            self.model = self.model.to(self.device)
+
+        return True
 
     def forward(self, x, y=None, return_ft=False):
         """Forward pass through the model"""
@@ -271,11 +303,8 @@ class MEDAFLightningModule(pl.LightningModule):
 
             # Log per-class AUC if available
             if "per_class_auc" in auc_results:
-                for i, class_auc in enumerate(auc_results["per_class_auc"]):
-                    if i < len(self.class_names):
-                        self.log(
-                            f"val/auc_{self.class_names[i]}", class_auc, on_epoch=True
-                        )
+                for class_name, class_auc in auc_results["per_class_auc"].items():
+                    self.log(f"val/auc_{class_name}", class_auc, on_epoch=True)
 
         except Exception as e:
             print(f"Error in validation_epoch_end: {e}")
@@ -289,6 +318,11 @@ class MEDAFLightningModule(pl.LightningModule):
     ) -> Dict[str, torch.Tensor]:
         """Test step - same as validation but with optimal thresholds if enabled"""
         inputs, targets = batch
+
+        # Ensure model and criterion are initialized
+        if not self._ensure_model_initialized():
+            raise RuntimeError("Model is not properly initialized")
+        self._ensure_criterion_initialized()
 
         # Forward pass
         output_dict = self.model(inputs, targets)
@@ -341,9 +375,12 @@ class MEDAFLightningModule(pl.LightningModule):
 
         # Log per-class AUC
         if "per_class_auc" in auc_results:
-            for i, class_auc in enumerate(auc_results["per_class_auc"]):
-                if i < len(self.class_names):
-                    self.log(f"test/auc_{self.class_names[i]}", class_auc)
+            for class_name, class_auc in auc_results["per_class_auc"].items():
+                self.log(f"test/auc_{class_name}", class_auc)
+
+        # Add this to log F1 score:
+        avg_f1 = torch.stack([x["test_f1"] for x in outputs]).mean()
+        self.log("test/f1_score", avg_f1)
 
     def configure_optimizers(self):
         """Configure optimizer and learning rate scheduler"""

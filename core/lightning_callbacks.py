@@ -50,6 +50,9 @@ class MEDAFMetricsCallback(Callback):
         self.train_accs = []
         self.val_accs = []
         self.epochs = []
+        self.last_validation_epoch = (
+            -1
+        )  # Track last epoch we stored validation data for
 
     def on_train_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
         """Log training metrics at the end of each epoch"""
@@ -61,6 +64,12 @@ class MEDAFMetricsCallback(Callback):
             train_loss = trainer.logged_metrics.get("train/loss_epoch", 0)
             train_acc = trainer.logged_metrics.get("train/accuracy_epoch", 0)
 
+            # Convert tensors to CPU and then to Python scalars for plotting
+            if hasattr(train_loss, "cpu"):
+                train_loss = train_loss.cpu().item()
+            if hasattr(train_acc, "cpu"):
+                train_acc = train_acc.cpu().item()
+
             self.train_losses.append(train_loss)
             self.train_accs.append(train_acc)
 
@@ -68,16 +77,30 @@ class MEDAFMetricsCallback(Callback):
         self, trainer: pl.Trainer, pl_module: pl.LightningModule
     ):
         """Log validation metrics and create plots periodically"""
-        # Store validation metrics
-        if trainer.logged_metrics:
-            val_loss = trainer.logged_metrics.get("val/loss", 0)
-            val_acc = trainer.logged_metrics.get("val/accuracy", 0)
+        # Only store validation metrics once per epoch to match training metrics
+        # Check if we haven't stored validation data for this epoch yet
+        if trainer.current_epoch > self.last_validation_epoch:
+            # Store validation metrics
+            if trainer.logged_metrics:
+                val_loss = trainer.logged_metrics.get("val/loss", 0)
+                val_acc = trainer.logged_metrics.get("val/accuracy", 0)
 
-            self.val_losses.append(val_loss)
-            self.val_accs.append(val_acc)
+                # Convert tensors to CPU and then to Python scalars for plotting
+                if hasattr(val_loss, "cpu"):
+                    val_loss = val_loss.cpu().item()
+                if hasattr(val_acc, "cpu"):
+                    val_acc = val_acc.cpu().item()
+
+                self.val_losses.append(val_loss)
+                self.val_accs.append(val_acc)
+                self.last_validation_epoch = trainer.current_epoch
 
         # Create plots every N epochs
         if (trainer.current_epoch + 1) % self.log_every_n_epochs == 0:
+            # Debug: print array lengths before plotting
+            print(
+                f"Debug - Epoch {trainer.current_epoch}: epochs={len(self.epochs)}, train_losses={len(self.train_losses)}, val_losses={len(self.val_losses)}, train_accs={len(self.train_accs)}, val_accs={len(self.val_accs)}"
+            )
             self._create_training_plots(trainer.current_epoch)
 
     def _create_training_plots(self, epoch: int):
@@ -85,20 +108,56 @@ class MEDAFMetricsCallback(Callback):
         if not self.save_plots or len(self.epochs) < 2:
             return
 
+        # Ensure all data is in the correct format for plotting
+        def _ensure_scalar(data_list):
+            """Convert any remaining tensors to scalars"""
+            result = []
+            for item in data_list:
+                if hasattr(item, "cpu"):
+                    result.append(item.cpu().item())
+                else:
+                    result.append(item)
+            return result
+
+        # Convert any remaining tensors to scalars
+        train_losses = _ensure_scalar(self.train_losses)
+        val_losses = _ensure_scalar(self.val_losses)
+        train_accs = _ensure_scalar(self.train_accs)
+        val_accs = _ensure_scalar(self.val_accs)
+
+        # Safety check: ensure all arrays have the same length as epochs
+        min_length = len(self.epochs)
+
+        # Truncate all arrays to match the minimum length
+        epochs_to_plot = self.epochs[:min_length]
+        train_losses = train_losses[:min_length]
+        val_losses = val_losses[:min_length]
+        train_accs = train_accs[:min_length]
+        val_accs = val_accs[:min_length]
+
+        # Additional safety check: ensure we have data to plot
+        if len(epochs_to_plot) < 2:
+            print(
+                f"Warning: Not enough data points to create plots (epochs: {len(epochs_to_plot)})"
+            )
+            return
+
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
 
-        # Loss plot
-        ax1.plot(self.epochs, self.train_losses, label="Train Loss", color="blue")
-        ax1.plot(self.epochs, self.val_losses, label="Val Loss", color="red")
+        # Loss plot - only plot if we have validation data
+        ax1.plot(epochs_to_plot, train_losses, label="Train Loss", color="blue")
+        if len(val_losses) > 0:
+            ax1.plot(epochs_to_plot, val_losses, label="Val Loss", color="red")
         ax1.set_xlabel("Epoch")
         ax1.set_ylabel("Loss")
         ax1.set_title("Training and Validation Loss")
         ax1.legend()
         ax1.grid(True)
 
-        # Accuracy plot
-        ax2.plot(self.epochs, self.train_accs, label="Train Accuracy", color="blue")
-        ax2.plot(self.epochs, self.val_accs, label="Val Accuracy", color="red")
+        # Accuracy plot - only plot if we have validation data
+        ax2.plot(epochs_to_plot, train_accs, label="Train Accuracy", color="blue")
+        if len(val_accs) > 0:
+            ax2.plot(epochs_to_plot, val_accs, label="Val Accuracy", color="red")
         ax2.set_xlabel("Epoch")
         ax2.set_ylabel("Accuracy")
         ax2.set_title("Training and Validation Accuracy")

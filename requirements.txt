@@ -37,4 +37,4 @@ flake8>=4.0.0
 # Optional: For advanced features
 hydra-core>=1.2.0  # For configuration management
 optuna>=3.0.0      # For hyperparameter optimization
-neptune-client>=0.16.0  # For experiment tracking
+neptune>=1.14.0  # For experiment tracking
