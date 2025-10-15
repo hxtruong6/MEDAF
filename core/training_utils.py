@@ -596,6 +596,7 @@ def calculate_roc_curves(
 # ATTENTION DIVERSITY LOSS
 # ============================================================================
 
+
 def calculate_multilabel_attention_diversity(
     cams_list: List[torch.Tensor], targets: torch.Tensor, eps: float = 1e-6
 ) -> torch.Tensor:

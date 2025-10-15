@@ -2,6 +2,7 @@ import copy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torchvision import models
 
 
 def conv1x1(in_planes, out_planes, stride=1):
@@ -132,6 +133,34 @@ class ResNet(nn.Module):
         return output
 
 
+class DenseNet(nn.Module):
+
+    def __init__(self, pretrained=True, output_dim=-1, inchan=3):
+        super().__init__()
+
+        # Load pretrained DenseNet-121
+        densenet = models.densenet121(pretrained=pretrained)
+
+        # Extract the feature layers (excluding classifier)
+        self.features = densenet.features
+
+        # Set output dimension
+        if output_dim > 0:
+            self.output_dim = output_dim
+        else:
+            self.output_dim = 1024  # DenseNet-121 feature dimension
+
+        self.avg_output = False
+
+    def forward(self, x):
+        output = self.features(x)
+        return output
+
+    def children(self):
+        """Return children for compatibility with MEDAF architecture"""
+        return [self.features]
+
+
 def build_backbone(img_size, backbone_name, projection_dim, inchan=3):
     if backbone_name == "resnet18":
         backbone = ResNet(
@@ -152,6 +181,10 @@ def build_backbone(img_size, backbone_name, projection_dim, inchan=3):
             res2ndstride=2,
         )
         cam_size = int(img_size / 32)
+    elif backbone_name == "densenet121":
+        # Use our custom DenseNet class
+        backbone = DenseNet(pretrained=True, output_dim=projection_dim, inchan=inchan)
+        cam_size = int(img_size / 32)  # DenseNet reduces spatial size by 32
     else:
         valid_backbone = backbone_name
         raise Exception(f'Backbone "{valid_backbone}" is not defined.')

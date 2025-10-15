@@ -1,9 +1,9 @@
 #!/bin/bash
 
 
-python medaf_lightning_trainer.py --mode test \
-    --checkpoint checkpoints/medaf_lightning/2025-10-14-17_15/last.ckpt \
-    --config config_lightning.yaml
+# python medaf_lightning_trainer.py --mode test \
+#     --checkpoint checkpoints/medaf_lightning/2025-10-14-17_15/last.ckpt \
+#     --config config_lightning.yaml
 
 
 # python medaf_lightning_trainer.py --mode train \
@@ -12,3 +12,8 @@ python medaf_lightning_trainer.py --mode test \
 # python medaf_lightning_trainer.py --mode train \
 #     --resume checkpoints/medaf_lightning/2025-10-14-15_48/last.ckpt \
 #     --config config_lightning.yaml
+
+
+
+python medaf_lightning_trainer.py --mode train \
+    --config config_lightning.yaml

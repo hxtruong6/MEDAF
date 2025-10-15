@@ -32,32 +32,67 @@ class MultiLabelMEDAF(nn.Module):
         ]  # Changed from num_known to num_classes for clarity
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
 
-        # Shared layers (L1-L3)
-        self.shared_l3 = nn.Sequential(*list(backbone.children())[:-6])
+        if args["backbone"] == "densenet121":
+            self.shared_l3 = backbone
 
-        # Expert branch 1
-        self.branch1_l4 = nn.Sequential(*list(backbone.children())[-6:-3])
-        self.branch1_l5 = nn.Sequential(*list(backbone.children())[-3])
-        self.branch1_cls = conv1x1(feature_dim, self.num_classes)
+            # Create expert branches with additional layers
+            self.branch1_l4 = nn.Sequential(
+                nn.Conv2d(feature_dim, feature_dim, 3, padding=1),
+                nn.BatchNorm2d(feature_dim),
+                nn.ReLU(inplace=True),
+            )
+            self.branch1_l5 = nn.Sequential(
+                nn.Conv2d(feature_dim, feature_dim, 3, padding=1),
+                nn.BatchNorm2d(feature_dim),
+                nn.ReLU(inplace=True),
+            )
+            self.branch1_cls = conv1x1(feature_dim, self.num_classes)
 
-        # Expert branch 2 (deep copy)
-        self.branch2_l4 = copy.deepcopy(self.branch1_l4)
-        self.branch2_l5 = copy.deepcopy(self.branch1_l5)
-        self.branch2_cls = conv1x1(feature_dim, self.num_classes)
+            # Expert branch 2 (deep copy)
+            self.branch2_l4 = copy.deepcopy(self.branch1_l4)
+            self.branch2_l5 = copy.deepcopy(self.branch1_l5)
+            self.branch2_cls = conv1x1(feature_dim, self.num_classes)
 
-        # Expert branch 3 (deep copy)
-        self.branch3_l4 = copy.deepcopy(self.branch1_l4)
-        self.branch3_l5 = copy.deepcopy(self.branch1_l5)
-        self.branch3_cls = conv1x1(feature_dim, self.num_classes)
+            # Expert branch 3 (deep copy)
+            self.branch3_l4 = copy.deepcopy(self.branch1_l4)
+            self.branch3_l5 = copy.deepcopy(self.branch1_l5)
+            self.branch3_cls = conv1x1(feature_dim, self.num_classes)
 
-        # Gating network
-        self.gate_l3 = copy.deepcopy(self.shared_l3)
-        self.gate_l4 = copy.deepcopy(self.branch1_l4)
-        self.gate_l5 = copy.deepcopy(self.branch1_l5)
-        self.gate_cls = nn.Sequential(
-            Classifier(feature_dim, int(feature_dim / 4), bias=True),
-            Classifier(int(feature_dim / 4), 3, bias=True),  # 3 experts
-        )
+            # Gating network - use the same backbone reference
+            self.gate_l3 = backbone
+            self.gate_l4 = copy.deepcopy(self.branch1_l4)
+            self.gate_l5 = copy.deepcopy(self.branch1_l5)
+            self.gate_cls = nn.Sequential(
+                Classifier(feature_dim, int(feature_dim / 4), bias=True),
+                Classifier(int(feature_dim / 4), 3, bias=True),  # 3 experts
+            )
+        else:
+            # Shared layers (L1-L3)
+            self.shared_l3 = nn.Sequential(*list(backbone.children())[:-6])
+
+            # Expert branch 1
+            self.branch1_l4 = nn.Sequential(*list(backbone.children())[-6:-3])
+            self.branch1_l5 = nn.Sequential(*list(backbone.children())[-3])
+            self.branch1_cls = conv1x1(feature_dim, self.num_classes)
+
+            # Expert branch 2 (deep copy)
+            self.branch2_l4 = copy.deepcopy(self.branch1_l4)
+            self.branch2_l5 = copy.deepcopy(self.branch1_l5)
+            self.branch2_cls = conv1x1(feature_dim, self.num_classes)
+
+            # Expert branch 3 (deep copy)
+            self.branch3_l4 = copy.deepcopy(self.branch1_l4)
+            self.branch3_l5 = copy.deepcopy(self.branch1_l5)
+            self.branch3_cls = conv1x1(feature_dim, self.num_classes)
+
+            # Gating network
+            self.gate_l3 = copy.deepcopy(self.shared_l3)
+            self.gate_l4 = copy.deepcopy(self.branch1_l4)
+            self.gate_l5 = copy.deepcopy(self.branch1_l5)
+            self.gate_cls = nn.Sequential(
+                Classifier(feature_dim, int(feature_dim / 4), bias=True),
+                Classifier(int(feature_dim / 4), 3, bias=True),  # 3 experts
+            )
 
     def forward(self, x, y=None, return_ft=False):
         """
@@ -112,7 +147,13 @@ class MultiLabelMEDAF(nn.Module):
             )
 
         # Gating network
-        gate_l5 = self.gate_l5(self.gate_l4(self.gate_l3(x)))
+        # For DenseNet, reuse the shared features instead of running backbone again
+        if hasattr(self.shared_l3, "features"):
+            # DenseNet case: reuse shared features
+            gate_l5 = self.gate_l5(self.gate_l4(ft_till_l3))
+        else:
+            # ResNet case: run backbone again
+            gate_l5 = self.gate_l5(self.gate_l4(self.gate_l3(x)))
         gate_pool = self.avg_pool(gate_l5).view(b, -1)
         gate_pred = F.softmax(self.gate_cls(gate_pool) / self.gate_temp, dim=1)
 
@@ -352,3 +393,9 @@ class MultiLabelMEDAF(nn.Module):
             return extractor_params
         elif prefix in ["classifier"]:
             return classifier_params
+
+    def to(self, device):
+        """Override to() method to ensure all components are moved to the same device"""
+        # Call parent to() method which will handle all registered submodules
+        super().to(device)
+        return self

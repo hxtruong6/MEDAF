@@ -371,7 +371,7 @@ class ChestXrayUnknownDataset(data.Dataset):
 # All 14 ChestX-ray14 labels for full dataset training
 ALL_CHESTXRAY_LABELS = [
     "Atelectasis",
-    "Cardiomegaly", 
+    "Cardiomegaly",
     "Effusion",
     "Infiltration",
     "Mass",
@@ -412,37 +412,43 @@ class ChestXrayFullDataset(data.Dataset):
         if not self.csv_path.exists():
             raise FileNotFoundError(f"ChestX-ray CSV not found: {self.csv_path}")
         if not self.image_root.exists():
-            raise FileNotFoundError(f"ChestX-ray image directory not found: {self.image_root}")
+            raise FileNotFoundError(
+                f"ChestX-ray image directory not found: {self.image_root}"
+            )
 
         if transform is None:
-            self.transform = transforms.Compose([
-                transforms.Resize((img_size, img_size)),
-                transforms.ToTensor(),
-                transforms.Normalize(
-                    mean=[0.485, 0.456, 0.406],
-                    std=[0.229, 0.224, 0.225],
-                ),
-            ])
+            self.transform = transforms.Compose(
+                [
+                    transforms.Resize((img_size, img_size)),
+                    transforms.ToTensor(),
+                    transforms.Normalize(
+                        mean=[0.485, 0.456, 0.406],
+                        std=[0.229, 0.224, 0.225],
+                    ),
+                ]
+            )
         else:
             self.transform = transform
 
         # Use all 14 labels
-        self.label_to_idx = {label: idx for idx, label in enumerate(ALL_CHESTXRAY_LABELS)}
+        self.label_to_idx = {
+            label: idx for idx, label in enumerate(ALL_CHESTXRAY_LABELS)
+        }
         self.num_classes = len(self.label_to_idx)
 
         # Load CSV data
         df = pd.read_csv(self.csv_path)
-        
+
         # Filter by train/test list if provided
         if train_list and Path(train_list).exists():
-            with open(train_list, 'r') as f:
+            with open(train_list, "r") as f:
                 train_images = set(line.strip() for line in f)
-            df = df[df['Image Index'].isin(train_images)]
+            df = df[df["Image Index"].isin(train_images)]
             print(f"Filtered to {len(df)} training images")
         elif test_list and Path(test_list).exists():
-            with open(test_list, 'r') as f:
+            with open(test_list, "r") as f:
                 test_images = set(line.strip() for line in f)
-            df = df[df['Image Index'].isin(test_images)]
+            df = df[df["Image Index"].isin(test_images)]
             print(f"Filtered to {len(df)} test images")
 
         # Limit samples if specified
@@ -473,7 +479,7 @@ class ChestXrayFullDataset(data.Dataset):
     def __getitem__(self, idx):
         record = self.records[idx]
         image_path = self.image_root / record["Image Index"]
-        
+
         if not image_path.exists():
             raise FileNotFoundError(f"Missing image: {image_path}")
 
@@ -484,7 +490,7 @@ class ChestXrayFullDataset(data.Dataset):
         # Create multi-hot label vector
         labels = torch.zeros(self.num_classes, dtype=torch.float32)
         finding_labels = self._parse_label_list(record.get("Finding Labels", ""))
-        
+
         for label in finding_labels:
             if label in self.label_to_idx:
                 labels[self.label_to_idx[label]] = 1.0

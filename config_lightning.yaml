@@ -11,15 +11,15 @@ data:
   img_size: 224
   max_samples: null # Set to integer for quick experiments, null for full dataset
 
-# Training Configuration
+# Training Configuration - Updated for DenseNet-121 with Focal Loss
 training:
   batch_size: 32
-  num_epochs: 50
-  learning_rate: 1e-4
-  weight_decay: 1e-4 # For AdamW optimizer
+  num_epochs: 100  # Increased for better convergence with lower LR
+  learning_rate: 0.00005  # As specified: 0.00005
+  weight_decay: 1e-4  # Standard weight decay for AdamW
   val_ratio: 0.1
   num_workers: 8  # Increased for better performance
-  use_stratified_split: false # Use stratified split to prevent dataset imbalance
+  use_stratified_split: false # Enable stratified split for better class balance
   use_optimal_thresholds: true
   create_roc_plots: true # Create ROC curve plots during evaluation
 
@@ -30,39 +30,39 @@ training:
     eps: 1e-8
     amsgrad: false
 
-  # Learning Rate Scheduler Configuration
+  # Learning Rate Scheduler Configuration - ReduceLROnPlateau as specified
   scheduler:
     enabled: true
-    type: "cosine" # cosine, step, plateau
+    type: "plateau" # ReduceLROnPlateau as specified
     # For cosine scheduler
     eta_min: 1e-6
     # For step scheduler
     step_size: 10
     gamma: 0.1
     # For plateau scheduler
-    factor: 0.5
-    patience: 5
-    min_lr: 1e-6
+    factor: 0.5  # Reduce LR by half when plateau is detected
+    patience: 5  # Wait 5 epochs before reducing LR
+    min_lr: 1e-7  # Minimum learning rate
 
-  # Loss Configuration
+  # Loss Configuration - Focal Loss as specified
   loss:
-    type: "bce" # focal, bce, weighted_bce
-    focal_alpha: 0.25 # FIXED: Use 0.25 instead of 1.0 for multi-label classification
-    focal_gamma: 2.0
+    type: "focal" # Focal Loss as specified
+    focal_alpha: 0.25  # Adjusted for multi-label: alpha=0.25 (prevents zero loss for negative samples)
+    focal_gamma: 2.0  # As specified: gamma=2
     class_weighting:
       enabled: true
       method: "inverse_freq" # inverse_freq, effective_num, focal
 
   # Early Stopping Configuration
   early_stopping:
-    patience: 50  # Increased patience to allow longer training
+    patience: 15  # Increased patience for lower LR training
     min_delta: 1e-6
     monitor: "val/loss"
     mode: "min"
 
-# Model Configuration
+# Model Configuration - DenseNet-121 as specified
 model:
-  backbone: "resnet18"
+  backbone: "densenet121"  # DenseNet-121 as specified
   num_classes: 14
   gate_temp: 100
 
@@ -75,8 +75,8 @@ model:
 
 # Checkpoint Configuration
 checkpoints:
-  dir: "checkpoints/medaf_lightning"
-  save_every_n_epochs: 5  # Save checkpoint every N epochs
+  dir: "checkpoints/medaf_densenet_focal"
+  save_every_n_epochs: 10  # Save checkpoint every 10 epochs
   save_top_k: 3  # Keep top K best models
   save_last: true  # Always save the last checkpoint
 
@@ -84,12 +84,12 @@ checkpoints:
 # Logging Configuration
 logging:
   level: "INFO" # DEBUG, INFO, WARNING, ERROR
-  metrics_dir: "logs/lightning"
+  metrics_dir: "logs/densenet_focal"
 
 # Hardware Configuration
 hardware:
   device: "auto" # auto, cuda, cpu, mps
-  mixed_precision: false # Enable automatic mixed precision training
+  mixed_precision: true # Enable mixed precision for DenseNet efficiency
   memory_fraction: 0.9
   pin_memory: true
 

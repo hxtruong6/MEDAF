@@ -33,14 +33,15 @@ class FocalLoss(nn.Module):
         self.gamma = gamma
         self.reduction = reduction
         self.pos_weight = pos_weight
-        
+
         # Warning for problematic alpha values in multi-label classification
         if alpha == 1.0:
             import warnings
+
             warnings.warn(
                 "Focal Loss with alpha=1.0 causes zero loss for negative samples in multi-label classification. "
                 "Consider using alpha=0.25 or alpha=0.5 for better performance.",
-                UserWarning
+                UserWarning,
             )
 
     def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:

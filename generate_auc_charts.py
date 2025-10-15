@@ -12,6 +12,7 @@ from pathlib import Path
 import pandas as pd
 import argparse
 from sklearn.metrics import roc_curve, auc
+from misc.util import get_current_time
 
 # Set style for better plots
 plt.style.use("default")
@@ -140,20 +141,20 @@ def create_auc_charts_from_model(checkpoint_path, config_path="config_lightning.
                 auc_scores[class_name] = roc_auc
                 macro_auc_scores.append(roc_auc)
             except ValueError:
-                auc_scores[class_name] = 0.5
-                macro_auc_scores.append(0.5)
+                raise ValueError(f"Error calculating AUC for {class_name}")
         else:
-            auc_scores[class_name] = 0.5
-            macro_auc_scores.append(0.5)
+            raise ValueError(f"Error calculating AUC for {class_name}")
 
     # Calculate overall metrics
     macro_auc = np.mean(macro_auc_scores)
+    # TODO: we need to calculate these values properly
     micro_auc = macro_auc  # Simplified - in practice you'd calculate this properly
     weighted_auc = macro_auc  # Simplified
     novelty_auroc = 0.5353  # From your log - would need separate calculation
 
     # Create output directory
-    output_dir = Path("auc_charts")
+    current_time = get_current_time()
+    output_dir = Path(f"auc_charts/{current_time}")
     output_dir.mkdir(exist_ok=True)
 
     print("📊 Creating AUC visualizations from real model predictions...")

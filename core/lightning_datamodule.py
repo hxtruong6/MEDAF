@@ -9,7 +9,11 @@ from typing import Optional, Tuple, Dict, Any
 import numpy as np
 from sklearn.model_selection import train_test_split
 
-from test_multilabel_medaf import ChestXrayKnownDataset, ChestXrayUnknownDataset, ChestXrayFullDataset
+from test_multilabel_medaf import (
+    ChestXrayKnownDataset,
+    ChestXrayUnknownDataset,
+    ChestXrayFullDataset,
+)
 
 
 class MEDAFDataModule(pl.LightningDataModule):
