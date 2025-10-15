@@ -170,15 +170,15 @@ class MEDAFLightningModule(pl.LightningModule):
             self.log(
                 "train/loss", total_loss, on_step=True, on_epoch=True, prog_bar=True
             )
-            self.log("train/expert_loss", sum(bce_losses), on_step=True, on_epoch=True)
-            self.log("train/gate_loss", gate_loss, on_step=True, on_epoch=True)
+            self.log("train/expert_loss", sum(bce_losses), on_step=False, on_epoch=True)
+            self.log("train/gate_loss", gate_loss, on_step=False, on_epoch=True)
             self.log(
-                "train/diversity_loss", diversity_loss, on_step=True, on_epoch=True
+                "train/diversity_loss", diversity_loss, on_step=False, on_epoch=True
             )
             self.log(
                 "train/accuracy",
                 accuracies[-1],
-                on_step=True,
+                on_step=False,
                 on_epoch=True,
                 prog_bar=True,
             )
@@ -413,9 +413,9 @@ class MEDAFLightningModule(pl.LightningModule):
         else:
             raise ValueError(f"Unknown optimizer type: {optimizer_type}")
 
-        # Configure learning rate scheduler if specified
+        # Configure learning rate scheduler - enable by default to prevent overfitting
         scheduler_config = self.training_config.get("scheduler", {})
-        if scheduler_config.get("enabled", False):
+        if scheduler_config.get("enabled", True):  # Enable by default
             scheduler_type = scheduler_config.get("type", "cosine")
 
             if scheduler_type == "cosine":

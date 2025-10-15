@@ -906,10 +906,10 @@ splits_AUROC = {
 
 
 def get_current_time() -> str:
-    # Get the current time
-    current_time = datetime.now().time()
+    # Get the current datetime
+    current_datetime = datetime.now()
 
-    # Format the current time to YYYY-MM-DD-HH_MM
-    formatted_current_time = current_time.strftime("%Y-%m-%d-%H_%M")
+    # Format the current datetime to YYYY-MM-DD-HH_MM
+    formatted_current_time = current_datetime.strftime("%Y-%m-%d-%H_%M")
     print(f"Current time in YYYY-MM-DD-HH_MM format: {formatted_current_time}")
     return formatted_current_time

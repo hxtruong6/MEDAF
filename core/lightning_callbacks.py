@@ -422,8 +422,12 @@ class MEDAFROCCurveCallback(Callback):
 
         # Per-class ROC curves
         for i, class_name in enumerate(self.class_names):
-            if f"roc_curve_{i}" in roc_data:
-                fpr, tpr, auc = roc_data[f"roc_curve_{i}"]
+            if class_name in roc_data:
+                curve_data = roc_data[class_name]
+                fpr = curve_data["fpr"]
+                tpr = curve_data["tpr"]
+                # Calculate AUC from the curve
+                auc = np.trapezoid(tpr, fpr)
                 ax1.plot(fpr, tpr, label=f"{class_name} (AUC={auc:.3f})", linewidth=2)
 
         ax1.plot([0, 1], [0, 1], "k--", alpha=0.5)
@@ -433,16 +437,34 @@ class MEDAFROCCurveCallback(Callback):
         ax1.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
         ax1.grid(True, alpha=0.3)
 
-        # Macro-average ROC curve
-        if "macro_roc_curve" in roc_data:
-            fpr, tpr, auc = roc_data["macro_roc_curve"]
-            ax2.plot(
-                fpr,
-                tpr,
-                label=f"Macro-average (AUC={auc:.3f})",
-                linewidth=2,
-                color="red",
-            )
+        # Macro-average ROC curve - calculate from individual curves
+        if len(roc_data) > 0:
+            # Calculate macro-average ROC curve
+            all_fpr = []
+            all_tpr = []
+            for class_name in self.class_names:
+                if class_name in roc_data:
+                    all_fpr.append(roc_data[class_name]["fpr"])
+                    all_tpr.append(roc_data[class_name]["tpr"])
+
+            if all_fpr:
+                # Interpolate all curves to common FPR points
+                mean_fpr = np.linspace(0, 1, 100)
+                mean_tpr = np.zeros_like(mean_fpr)
+
+                for fpr, tpr in zip(all_fpr, all_tpr):
+                    mean_tpr += np.interp(mean_fpr, fpr, tpr)
+
+                mean_tpr /= len(all_fpr)
+                macro_auc = np.trapz(mean_tpr, mean_fpr)
+
+                ax2.plot(
+                    mean_fpr,
+                    mean_tpr,
+                    label=f"Macro-average (AUC={macro_auc:.3f})",
+                    linewidth=2,
+                    color="red",
+                )
 
         ax2.plot([0, 1], [0, 1], "k--", alpha=0.5)
         ax2.set_xlabel("False Positive Rate")
@@ -478,6 +500,7 @@ class MEDAFModelCheckpointCallback(pl.callbacks.ModelCheckpoint):
         save_top_k: int = 3,
         save_last: bool = True,
         save_weights_only: bool = False,
+        every_n_epochs: int = None,  # Explicitly add every_n_epochs parameter
         **kwargs,
     ):
         super().__init__(
@@ -488,11 +511,18 @@ class MEDAFModelCheckpointCallback(pl.callbacks.ModelCheckpoint):
             save_top_k=save_top_k,
             save_last=save_last,
             save_weights_only=save_weights_only,
+            every_n_epochs=every_n_epochs,  # Pass every_n_epochs to parent
             **kwargs,
         )
 
         # Create directory if it doesn't exist
         Path(dirpath).mkdir(parents=True, exist_ok=True)
+
+        # Log checkpoint configuration
+        if every_n_epochs is not None:
+            print(
+                f"📁 Checkpoint callback configured: saving every {every_n_epochs} epochs + best model"
+            )
 
     def on_save_checkpoint(
         self,
@@ -517,3 +547,15 @@ class MEDAFModelCheckpointCallback(pl.callbacks.ModelCheckpoint):
             checkpoint["pos_weight"] = pl_module.pos_weight.cpu()
 
         super().on_save_checkpoint(trainer, pl_module, checkpoint)
+
+    def on_train_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
+        """Log when periodic checkpoints are saved"""
+        # Check if this is a periodic save (not best model save)
+        if hasattr(self, "every_n_epochs") and self.every_n_epochs is not None:
+            if (trainer.current_epoch + 1) % self.every_n_epochs == 0:
+                print(
+                    f"💾 Periodic checkpoint saved at epoch {trainer.current_epoch + 1}"
+                )
+
+        # Call parent method
+        super().on_train_epoch_end(trainer, pl_module)

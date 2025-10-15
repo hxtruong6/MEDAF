@@ -233,3 +233,29 @@ Threshold calibrated: 1.2215 (FPR target: 5.0%)
 ======================================================================
 
 (research_medaf_aidan) s2320437@spcc-a100g05 ~/WORK/aidan-medaf ±main⚡ »
+
+------
+✅ Standard Classification Results:
+  test/macro_auc: 0.7145
+  test/micro_auc: 0.7777
+  test/weighted_auc: 0.7072
+  test/auc_Atelectasis: 0.6829
+  test/auc_Cardiomegaly: 0.8168
+  test/auc_Effusion: 0.7700
+  test/auc_Infiltration: 0.6449
+  test/auc_Mass: 0.7005
+  test/auc_Nodule: 0.6272
+  test/auc_Pneumonia: 0.5874
+  test/auc_Pneumothorax: 0.7686
+  test/auc_Consolidation: 0.6597
+  test/auc_Edema: 0.7891
+  test/auc_Emphysema: 0.8125
+  test/auc_Fibrosis: 0.7070
+  test/auc_Pleural_Thickening: 0.6856
+  test/auc_Hernia: 0.7510
+  test/f1_score: 0.0780
+
+🔍 Novelty Detection Results:
+  AUROC: 0.7489
+  Detection Accuracy: 0.6423
+  F1-Score: 0.0033

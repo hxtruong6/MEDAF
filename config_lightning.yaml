@@ -18,7 +18,7 @@ training:
   learning_rate: 1e-4
   weight_decay: 1e-4 # For AdamW optimizer
   val_ratio: 0.1
-  num_workers: 1
+  num_workers: 8  # Increased for better performance
   use_stratified_split: false # Use stratified split to prevent dataset imbalance
   use_optimal_thresholds: true
   create_roc_plots: true # Create ROC curve plots during evaluation
@@ -55,7 +55,7 @@ training:
 
   # Early Stopping Configuration
   early_stopping:
-    patience: 20
+    patience: 50  # Increased patience to allow longer training
     min_delta: 1e-6
     monitor: "val/loss"
     mode: "min"
@@ -76,6 +76,9 @@ model:
 # Checkpoint Configuration
 checkpoints:
   dir: "checkpoints/medaf_lightning"
+  save_every_n_epochs: 5  # Save checkpoint every N epochs
+  save_top_k: 3  # Keep top K best models
+  save_last: true  # Always save the last checkpoint
 
 
 # Logging Configuration

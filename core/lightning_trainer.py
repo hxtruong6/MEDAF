@@ -50,6 +50,11 @@ class MEDAFLightningTrainer:
         # Setup logging
         self.logger = logging.getLogger(__name__)
 
+        # Log which config file was loaded
+        self.logger.info(
+            f"Configuration loaded from: {self.config_manager.config_path}"
+        )
+
         # Setup device and memory optimization
         self._setup_device_and_memory()
 
@@ -159,15 +164,31 @@ class MEDAFLightningTrainer:
         """Create Lightning callbacks"""
         callbacks = []
 
-        # Early stopping
-        early_stopping = EarlyStopping(
-            monitor=self.config.get("training.early_stopping.monitor", "val/loss"),
-            mode=self.config.get("training.early_stopping.mode", "min"),
-            patience=self.config.get("training.early_stopping.patience", 15),
-            min_delta=float(self.config.get("training.early_stopping.min_delta", 1e-6)),
-            verbose=True,
-        )
-        callbacks.append(early_stopping)
+        # Early stopping - Use config value or default to max epochs
+        # early_stopping_config = {
+        #     "monitor": self.config.get("training.early_stopping.monitor", "val/loss"),
+        #     "mode": self.config.get("training.early_stopping.mode", "min"),
+        #     "patience": self.config.get(
+        #         "training.early_stopping.patience", 20
+        #     ),  # Use config or default to 20
+        #     "min_delta": float(
+        #         self.config.get("training.early_stopping.min_delta", 1e-6)
+        #     ),
+        # }
+
+        # self.logger.info(f"Early stopping configuration: {early_stopping_config}")
+        # self.logger.info(
+        #     f"Config patience value: {self.config.get('training.early_stopping.patience', 'NOT_FOUND')}"
+        # )
+
+        # early_stopping = EarlyStopping(
+        #     monitor=early_stopping_config["monitor"],
+        #     mode=early_stopping_config["mode"],
+        #     patience=early_stopping_config["patience"],
+        #     min_delta=early_stopping_config["min_delta"],
+        #     verbose=True,
+        # )
+        # callbacks.append(early_stopping)
 
         # Learning rate monitoring
         lr_monitor = LearningRateMonitor(logging_interval="epoch")
@@ -181,9 +202,12 @@ class MEDAFLightningTrainer:
             filename="medaf-lightning-{epoch:02d}-{val_loss:.4f}",
             monitor="val/loss",
             mode="min",
-            save_top_k=3,
-            save_last=True,
+            save_top_k=self.config.get("checkpoints.save_top_k", 3),
+            save_last=self.config.get("checkpoints.save_last", True),
             save_weights_only=False,
+            every_n_epochs=self.config.get(
+                "checkpoints.save_every_n_epochs", 5
+            ),  # Configurable periodic saving
         )
         callbacks.append(checkpoint_callback)
 
@@ -310,9 +334,12 @@ class MEDAFLightningTrainer:
         self.logger.info("Lightning trainer created successfully")
         return trainer
 
-    def train(self) -> Dict[str, Any]:
+    def train(self, ckpt_path: Optional[str] = None) -> Dict[str, Any]:
         """Main training method"""
-        self.logger.info("Starting MEDAF Lightning training...")
+        if ckpt_path:
+            self.logger.info(f"Resuming training from checkpoint: {ckpt_path}")
+        else:
+            self.logger.info("Starting MEDAF Lightning training...")
 
         # Create components
         self.lightning_module = self._create_lightning_module()
@@ -336,6 +363,7 @@ class MEDAFLightningTrainer:
         self.trainer.fit(
             model=self.lightning_module,
             datamodule=self.data_module,
+            ckpt_path=ckpt_path,
         )
 
         training_time = time.time() - training_start_time
