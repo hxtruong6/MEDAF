@@ -64,8 +64,16 @@ class MEDAFLightningModule(pl.LightningModule):
         # Save hyperparameters for logging
         self.save_hyperparameters(ignore=["model"])
 
+    def _move_pos_weight_to_device(self):
+        """Ensure pos_weight tensor (if set) lives on the current device."""
+        if self.pos_weight is not None:
+            device = getattr(self, "device", torch.device("cpu"))
+            if self.pos_weight.device != device:
+                self.pos_weight = self.pos_weight.to(device)
+
     def setup(self, stage: Optional[str] = None):
         """Setup the module - called after moving to device"""
+        self._move_pos_weight_to_device()
         self._ensure_criterion_initialized()
 
     def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
@@ -75,10 +83,9 @@ class MEDAFLightningModule(pl.LightningModule):
         # Restore pos_weight if available
         if "pos_weight" in checkpoint and checkpoint["pos_weight"] is not None:
             self.pos_weight = checkpoint["pos_weight"]
-            if hasattr(self, "device") and self.device is not None:
-                self.pos_weight = self.pos_weight.to(self.device)
 
         # Ensure criterion is initialized after loading
+        self._move_pos_weight_to_device()
         self._ensure_criterion_initialized()
 
         # Ensure model is on the correct device
@@ -88,6 +95,7 @@ class MEDAFLightningModule(pl.LightningModule):
         """Ensure criterion is properly initialized"""
         if self.criterion is None:
             device = getattr(self, "device", torch.device("cpu"))
+            self._move_pos_weight_to_device()
             self.criterion = LossFactory.create_loss(
                 loss_type=self.loss_config["type"],
                 num_classes=self.num_classes,
@@ -113,6 +121,21 @@ class MEDAFLightningModule(pl.LightningModule):
         """Forward pass through the model"""
         return self.model(x, y, return_ft)
 
+    def on_fit_start(self) -> None:
+        """Hook to ensure buffers are on the correct device before training."""
+        self._move_pos_weight_to_device()
+        # Recreate criterion so internal buffers match the active device
+        self.criterion = None
+        self._ensure_criterion_initialized()
+
+    def on_validation_start(self) -> None:
+        self._move_pos_weight_to_device()
+        self._ensure_criterion_initialized()
+
+    def on_test_start(self) -> None:
+        self._move_pos_weight_to_device()
+        self._ensure_criterion_initialized()
+
     def training_step(
         self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int
     ) -> Dict[str, torch.Tensor]:
@@ -127,6 +150,7 @@ class MEDAFLightningModule(pl.LightningModule):
 
             # Ensure criterion is initialized
             if self.criterion is None:
+                self._move_pos_weight_to_device()
                 self.criterion = LossFactory.create_loss(
                     loss_type=self.loss_config["type"],
                     num_classes=self.num_classes,
@@ -214,6 +238,7 @@ class MEDAFLightningModule(pl.LightningModule):
 
             # Ensure criterion is initialized
             if self.criterion is None:
+                self._move_pos_weight_to_device()
                 self.criterion = LossFactory.create_loss(
                     loss_type=self.loss_config["type"],
                     num_classes=self.num_classes,
@@ -322,6 +347,7 @@ class MEDAFLightningModule(pl.LightningModule):
         # Ensure model and criterion are initialized
         if not self._ensure_model_initialized():
             raise RuntimeError("Model is not properly initialized")
+        self._move_pos_weight_to_device()
         self._ensure_criterion_initialized()
 
         # Forward pass
@@ -453,7 +479,8 @@ class MEDAFLightningModule(pl.LightningModule):
 
     def set_class_weights(self, pos_weight: torch.Tensor):
         """Set class weights for the loss function"""
-        self.pos_weight = pos_weight.to(self.device) if pos_weight is not None else None
+        self.pos_weight = pos_weight.clone() if pos_weight is not None else None
+        self._move_pos_weight_to_device()
         if self.criterion is not None:
             # Recreate loss function with new weights
             self.criterion = LossFactory.create_loss(

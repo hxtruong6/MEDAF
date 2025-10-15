@@ -190,6 +190,10 @@ class LossFactory:
         """
         loss_type = loss_type.lower()
 
+        # Ensure pos_weight tensor, if provided, lives on the requested device
+        if pos_weight is not None and pos_weight.device != device:
+            pos_weight = pos_weight.to(device)
+
         if loss_type == "focal":
             return FocalLoss(
                 alpha=kwargs.get("focal_alpha", 1.0),
