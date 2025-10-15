@@ -76,7 +76,8 @@ class MEDAFDataModule(pl.LightningDataModule):
 
     def setup(self, stage: Optional[str] = None):
         """Setup datasets for each stage"""
-        if stage == "fit" or stage is None:
+        fit_stage = stage == "fit" or stage is None
+        if fit_stage and (self.train_dataset is None or self.val_dataset is None):
             # Load training dataset
             if self.use_full_dataset:
                 self.train_dataset = ChestXrayFullDataset(
@@ -116,7 +117,8 @@ class MEDAFDataModule(pl.LightningDataModule):
             # Calculate class weights for training dataset
             self._calculate_class_weights()
 
-        if stage == "test" or stage is None:
+        test_stage = stage == "test" or stage is None
+        if test_stage and self.test_dataset is None:
             # Load test dataset
             if self.use_full_dataset:
                 self.test_dataset = ChestXrayFullDataset(
